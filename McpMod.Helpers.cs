@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 
 namespace STS2_MCP;
 
@@ -194,6 +195,76 @@ public static partial class McpMod
         }
 
         return null;
+    }
+
+    private static object? GetInstanceMemberValue(object source, string memberName)
+    {
+        const System.Reflection.BindingFlags Flags =
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.DeclaredOnly;
+
+        for (var type = source.GetType(); type != null; type = type.BaseType)
+        {
+            try
+            {
+                var property = type.GetProperty(memberName, Flags);
+                if (property != null && property.GetIndexParameters().Length == 0)
+                    return property.GetValue(source);
+            }
+            catch { }
+
+            try
+            {
+                var field = type.GetField(memberName, Flags);
+                if (field != null)
+                    return field.GetValue(source);
+            }
+            catch { }
+        }
+
+        return null;
+    }
+
+    private static object? GetCardSelectorValue(NCardGridSelectionScreen screen, string memberName)
+    {
+        var value = GetInstanceMemberValue(screen, memberName);
+        if (value != null)
+            return value;
+
+        var prefs = GetInstanceFieldValue(screen, "_prefs");
+        return prefs != null ? GetInstanceMemberValue(prefs, memberName) : null;
+    }
+
+    private static int? GetCardSelectorInt(NCardGridSelectionScreen screen, string memberName)
+        => TryConvertToInt(GetCardSelectorValue(screen, memberName));
+
+    private static int? TryConvertToInt(object? value)
+    {
+        return value switch
+        {
+            int intValue => intValue,
+            long longValue when longValue >= int.MinValue && longValue <= int.MaxValue => (int)longValue,
+            short shortValue => shortValue,
+            byte byteValue => byteValue,
+            _ => null
+        };
+    }
+
+    private static HashSet<CardModel> GetSelectedCardModels(NCardGridSelectionScreen screen)
+    {
+        var selected = new HashSet<CardModel>();
+        if (GetInstanceFieldValue(screen, "_selectedCards") is not System.Collections.IEnumerable selectedCards)
+            return selected;
+
+        foreach (var item in selectedCards)
+        {
+            if (item is CardModel card)
+                selected.Add(card);
+        }
+
+        return selected;
     }
 
     private static void AddMenuOptionIfVisible(

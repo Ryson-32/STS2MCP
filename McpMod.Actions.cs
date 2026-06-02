@@ -701,6 +701,10 @@ public static partial class McpMod
         if (overlay is not NCardGridSelectionScreen screen)
             return Error("No card selection screen is open");
 
+        var deckEnchantConfirm = TryConfirmDeckEnchantSelection(screen);
+        if (deckEnchantConfirm != null)
+            return deckEnchantConfirm;
+
         // Check all preview containers (upgrade uses UpgradeSinglePreviewContainer / UpgradeMultiPreviewContainer,
         // NDeckCardSelectScreen uses PreviewContainer with %PreviewConfirm)
         foreach (var containerName in new[] { "%UpgradeSinglePreviewContainer", "%UpgradeMultiPreviewContainer", "%PreviewContainer" })
@@ -753,6 +757,49 @@ public static partial class McpMod
         }
 
         return Error("No confirm button is currently enabled - select more cards first");
+    }
+
+    private static Dictionary<string, object?>? TryConfirmDeckEnchantSelection(NCardGridSelectionScreen screen)
+    {
+        if (screen.GetType().Name != "NDeckEnchantSelectScreen")
+            return null;
+
+        var selectedCards = GetSelectedCardModels(screen);
+        var minSelect = System.Math.Max(GetCardSelectorInt(screen, "MinSelect") ?? 1, 1);
+        var maxSelect = GetCardSelectorInt(screen, "MaxSelect") ?? int.MaxValue;
+
+        if (selectedCards.Count < minSelect)
+            return Error($"No confirm button is currently enabled - select {minSelect - selectedCards.Count} more card(s) first");
+        if (selectedCards.Count > maxSelect)
+            return Error($"Too many cards selected ({selectedCards.Count}/{maxSelect})");
+
+        const System.Reflection.BindingFlags Flags =
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic;
+
+        var confirmMethod = screen.GetType().GetMethod("ConfirmSelection", Flags);
+        if (confirmMethod == null)
+            return Error("Deck enchant confirm method was not found");
+
+        var confirmButton = GetInstanceFieldValue(screen, "_multiPreviewConfirmButton")
+                            ?? GetInstanceFieldValue(screen, "_singlePreviewConfirmButton")
+                            ?? GetInstanceFieldValue(screen, "_confirmButton");
+
+        try
+        {
+            var parameters = confirmMethod.GetParameters();
+            confirmMethod.Invoke(screen, parameters.Length == 0 ? null : new[] { confirmButton });
+            return new Dictionary<string, object?>
+            {
+                ["status"] = "ok",
+                ["message"] = "Confirming deck enchant selection"
+            };
+        }
+        catch (System.Exception ex)
+        {
+            return Error($"Could not confirm deck enchant selection: {ex.GetBaseException().Message}");
+        }
     }
 
     private static Dictionary<string, object?> ExecuteCancelSelection()

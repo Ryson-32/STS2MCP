@@ -2157,6 +2157,7 @@ public static partial class McpMod
 
         // Cards in the grid (sorted by visual position - MoveToFront can reorder children)
         var cardHolders = FindAllSortedByPosition<NGridCardHolder>(screen);
+        var selectedModels = GetSelectedCardModels(screen);
         var cards = new List<Dictionary<string, object?>>();
         var selectedCards = new List<Dictionary<string, object?>>();
         int index = 0;
@@ -2168,6 +2169,8 @@ public static partial class McpMod
             var cardInfo = BuildCardInfo(card);
             cardInfo["index"] = index;
             AddCardHolderState(cardInfo, holder);
+            if (selectedModels.Contains(card))
+                cardInfo["is_selected"] = true;
             cards.Add(cardInfo);
             if (cardInfo["is_selected"] is true)
                 selectedCards.Add(new Dictionary<string, object?>(cardInfo));
@@ -2176,17 +2179,25 @@ public static partial class McpMod
         state["cards"] = cards;
         state["selected_cards"] = selectedCards;
         state["selected_count"] = selectedCards.Count;
-        state["min_select"] = GetMemberValue(screen, "MinSelect");
-        state["max_select"] = GetMemberValue(screen, "MaxSelect");
+        var minSelectValue = GetCardSelectorValue(screen, "MinSelect");
+        var maxSelectValue = GetCardSelectorValue(screen, "MaxSelect");
+        state["min_select"] = minSelectValue;
+        state["max_select"] = maxSelectValue;
 
         // Preview container showing? (selection complete, awaiting confirm)
         // Upgrade screens use UpgradeSinglePreviewContainer / UpgradeMultiPreviewContainer
         var previewSingle = screen.GetNodeOrNull<Godot.Control>("%UpgradeSinglePreviewContainer");
         var previewMulti = screen.GetNodeOrNull<Godot.Control>("%UpgradeMultiPreviewContainer");
         var previewGeneric = screen.GetNodeOrNull<Godot.Control>("%PreviewContainer");
+        var previewEnchantSingle = screen.GetNodeOrNull<Godot.Control>("%EnchantSinglePreviewContainer")
+                                   ?? screen.GetNodeOrNull<Godot.Control>("EnchantSinglePreviewContainer");
+        var previewEnchantMulti = screen.GetNodeOrNull<Godot.Control>("%EnchantMultiPreviewContainer")
+                                  ?? screen.GetNodeOrNull<Godot.Control>("EnchantMultiPreviewContainer");
         bool previewShowing = (previewSingle?.Visible ?? false)
                             || (previewMulti?.Visible ?? false)
-                            || (previewGeneric?.Visible ?? false);
+                            || (previewGeneric?.Visible ?? false)
+                            || (previewEnchantSingle?.Visible ?? false)
+                            || (previewEnchantMulti?.Visible ?? false);
         state["preview_showing"] = previewShowing;
 
         var previewCards = new List<Dictionary<string, object?>>();
@@ -2213,7 +2224,7 @@ public static partial class McpMod
         bool canCancel = false;
         if (previewShowing)
         {
-            foreach (var container in new[] { previewSingle, previewMulti, previewGeneric })
+            foreach (var container in new[] { previewSingle, previewMulti, previewGeneric, previewEnchantSingle, previewEnchantMulti })
             {
                 if (container?.Visible == true)
                 {
@@ -2232,7 +2243,7 @@ public static partial class McpMod
 
         // Confirm button - search all preview containers and main screen
         bool canConfirm = false;
-        foreach (var container in new[] { previewSingle, previewMulti, previewGeneric })
+        foreach (var container in new[] { previewSingle, previewMulti, previewGeneric, previewEnchantSingle, previewEnchantMulti })
         {
             if (container?.Visible == true)
             {
@@ -2252,6 +2263,12 @@ public static partial class McpMod
         if (!canConfirm)
         {
             canConfirm = FindAll<NConfirmButton>(screen).Any(IsControlVisibleOrActionable);
+        }
+        if (screen.GetType().Name == "NDeckEnchantSelectScreen")
+        {
+            var minSelect = Math.Max(TryConvertToInt(minSelectValue) ?? 1, 1);
+            var maxSelect = TryConvertToInt(maxSelectValue) ?? int.MaxValue;
+            canConfirm = selectedCards.Count >= minSelect && selectedCards.Count <= maxSelect;
         }
         state["can_confirm"] = canConfirm;
 
