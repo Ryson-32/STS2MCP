@@ -2264,7 +2264,7 @@ public static partial class McpMod
         {
             canConfirm = FindAll<NConfirmButton>(screen).Any(IsControlVisibleOrActionable);
         }
-        if (screen.GetType().Name == "NDeckEnchantSelectScreen")
+        if (IsDeckEnchantSelectScreen(screen))
         {
             var minSelect = Math.Max(TryConvertToInt(minSelectValue) ?? 1, 1);
             var maxSelect = TryConvertToInt(maxSelectValue) ?? int.MaxValue;

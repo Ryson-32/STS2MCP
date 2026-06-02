@@ -267,6 +267,9 @@ public static partial class McpMod
         return selected;
     }
 
+    private static bool IsDeckEnchantSelectScreen(NCardGridSelectionScreen screen)
+        => screen is NDeckEnchantSelectScreen;
+
     private static void AddMenuOptionIfVisible(
         List<Dictionary<string, object?>> options,
         object owner,

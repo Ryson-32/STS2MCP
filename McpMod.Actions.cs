@@ -761,7 +761,7 @@ public static partial class McpMod
 
     private static Dictionary<string, object?>? TryConfirmDeckEnchantSelection(NCardGridSelectionScreen screen)
     {
-        if (screen.GetType().Name != "NDeckEnchantSelectScreen")
+        if (!IsDeckEnchantSelectScreen(screen))
             return null;
 
         var selectedCards = GetSelectedCardModels(screen);
@@ -789,7 +789,13 @@ public static partial class McpMod
         try
         {
             var parameters = confirmMethod.GetParameters();
-            confirmMethod.Invoke(screen, parameters.Length == 0 ? null : new[] { confirmButton });
+            object?[]? args = null;
+            if (parameters.Length == 1)
+                args = new[] { confirmButton };
+            else if (parameters.Length > 1)
+                return Error($"Deck enchant confirm method has unsupported parameter count: {parameters.Length}");
+
+            confirmMethod.Invoke(screen, args);
             return new Dictionary<string, object?>
             {
                 ["status"] = "ok",
