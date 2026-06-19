@@ -26,3 +26,15 @@ GUIDE.md
 .trellis/workspace/
 .trellis/**/__pycache__/
 .trellis/**/*.pyc
+# Cross-device local-only state
+.env
+.env.local
+.env*.local
+node_modules/
+dist/
+coverage/
+.tmp/
+node_modules
+dist
+coverage
+.tmp
