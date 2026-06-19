@@ -33,6 +33,24 @@ max_journal_lines: 2000
 session_auto_commit: false
 
 #-------------------------------------------------------------------------------
+# Trellis Update
+#-------------------------------------------------------------------------------
+# Project-owned files that Trellis should not overwrite during template refresh.
+# These paths intentionally keep local repository guidance/customizations.
+update:
+  skip:
+    - .trellis/config.yaml
+    - AGENTS.md
+    - .trellis/workflow.md
+    - .agents/skills/trellis-finish-work/SKILL.md
+    - .agents/skills/trellis-brainstorm/SKILL.md
+    - .agents/skills/trellis-start/SKILL.md
+    - .agents/skills/trellis-channel/references/command-reference.md
+    - .agents/skills/trellis-meta/references/local-architecture/workspace-memory.md
+    - .codex/hooks/session-start.py
+    - .codex/hooks.json
+
+#-------------------------------------------------------------------------------
 # Task Lifecycle Hooks
 #-------------------------------------------------------------------------------
 
