@@ -17,13 +17,14 @@ GUIDE.md
 # Qoder
 .qoder.json
 
-# Trellis local runtime state
+# Trellis
+# Track .trellis/tasks/, .trellis/workspace/, .trellis/spec/, and config files
+# through Git so task/workspace state can move across machines. Keep only
+# developer-specific runtime state local.
 .trellis/.current-task
 .trellis/.developer
 .trellis/.runtime/
 .trellis/.backup-*/
-.trellis/tasks/
-.trellis/workspace/
 .trellis/**/__pycache__/
 .trellis/**/*.pyc
 # Cross-device local-only state

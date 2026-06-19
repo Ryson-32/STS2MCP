@@ -1,5 +1,19 @@
 # STS2 MCP — AI Gameplay Guide
 
+## Trellis Git Tracking
+
+- Track `.trellis/tasks/**`, `.trellis/workspace/**`, `.trellis/spec/**`,
+  `.trellis/config.yaml`, `.trellis/.version`, and
+  `.trellis/.template-hashes.json` in Git when they change.
+- Keep developer-local Trellis state out of Git: `.trellis/.developer`,
+  `.trellis/.current-task`, `.trellis/.runtime/`, `.trellis/.backup-*/`,
+  `.trellis/**/__pycache__/`, and `.trellis/**/*.pyc`.
+- Do not force-edit `.trellis/.version` or `.trellis/.template-hashes.json`
+  just to silence a `trellis update` warning. Run `trellis update --dry-run`
+  and fix the real tracked/ignored boundary instead.
+- Do not push, create PRs, tag releases, or deploy unless the user explicitly
+  asks for that remote action.
+
 ## MCP Tool Calling Tips
 
 ### State Polling
