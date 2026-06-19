@@ -130,19 +130,21 @@ Requires [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the 
 
 ```powershell
 # Pass game path directly:
-.\build.ps1 -GameDir "D:\SteamLibrary\steamapps\common\Slay the Spire 2"
+.\build.ps1 -GameDir "D:\SteamLibrary\steamapps\common\Slay the Spire 2" -Install
 
 # Or set it once and forget:
 $env:STS2_GAME_DIR = "D:\SteamLibrary\steamapps\common\Slay the Spire 2"
-.\build.ps1
+.\build.ps1 -Install
 ```
 
-The script builds `STS2_MCP.dll` into `out/STS2_MCP/`. Copy it along with the manifest JSON to `<game_install>/mods/` to install:
+The script builds `STS2_MCP.dll` into `out/STS2_MCP/`. With `-Install`, it also copies the DLL and manifest into `<game_install>/mods/`:
 
 ```
 out/STS2_MCP/STS2_MCP.dll           ->  <game_install>/mods/STS2_MCP.dll
 mod_manifest.json                   ->  <game_install>/mods/STS2_MCP.json
 ```
+
+The install step only replaces `STS2_MCP.dll` and `STS2_MCP.json`; it leaves local `STS2_MCP.conf` settings untouched. Omit `-Install` if you only want to build and copy files manually.
 
 ### Build instructions for macOS
 
