@@ -32,6 +32,9 @@
 - When changing Trellis, Codex, Claude, Cursor, or other project-level AI
   workflow files, keep shared rules path-agnostic and cross-device safe; put
   per-machine setup details in local-only files.
+- When frontend work touches behavior that may differ between macOS and
+  Windows, leave a clear boundary, configuration entry point, or code comment
+  for the other side. Do not implement unverified adaptations for the other OS.
 - Standing repo rule: after finishing verified changes, split them into
   logical commits by module or concern, then push the completed branch to the
   configured writable remote automatically.
