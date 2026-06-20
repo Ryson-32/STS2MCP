@@ -11,8 +11,35 @@
 - Do not force-edit `.trellis/.version` or `.trellis/.template-hashes.json`
   just to silence a `trellis update` warning. Run `trellis update --dry-run`
   and fix the real tracked/ignored boundary instead.
-- Do not push, create PRs, tag releases, or deploy unless the user explicitly
-  asks for that remote action.
+- Do not create PRs, tag releases, or deploy unless the user explicitly asks
+  for that remote action. Pushes follow the cross-device rules below.
+
+## Cross-Device Collaboration
+
+- This repository may be edited from both macOS and Windows checkouts. Treat
+  GitHub / the configured Git remote as the source of truth between machines.
+- Do not use OneDrive, iCloud, or other cloud-synced folders as the
+  synchronization layer for the Git worktree; local paths are only storage
+  locations.
+- Before editing, check `git status --short --branch`. When an upstream exists
+  and the worktree is clean, fast-forward from the remote before making changes.
+- If a checkout is dirty, ahead/behind, or has unfamiliar changes, preserve
+  them. Do not overwrite, reset, or fold in work left by the other machine,
+  another AI, or the user.
+- Keep machine-specific paths, tool versions, OS account names, secrets, tokens,
+  passwords, and local MCP/client config out of shared project docs. Use ignored
+  local config or local notes when those details are needed.
+- When changing Trellis, Codex, Claude, Cursor, or other project-level AI
+  workflow files, keep shared rules path-agnostic and cross-device safe; put
+  per-machine setup details in local-only files.
+- Standing repo rule: after finishing verified changes, split them into
+  logical commits by module or concern, then push the completed branch to the
+  configured writable remote automatically.
+- This is a public repository. Before every push, inspect the exact staged and
+  outgoing changes for private data: secrets, tokens, passwords, private keys,
+  local-only account details, machine-specific paths, and sensitive host or
+  network details. Do not push if the privacy check fails or the push would
+  include unfamiliar changes.
 
 ## MCP Tool Calling Tips
 
