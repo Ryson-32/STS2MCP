@@ -37,6 +37,9 @@ session_auto_commit: false
 #-------------------------------------------------------------------------------
 # Project-owned files that Trellis should not overwrite during template refresh.
 # These paths intentionally keep local repository guidance/customizations.
+# Cross-device convention: this repo keeps Trellis/Codex command examples on
+# `python3`. Windows S41 also has `python3`, while macOS may not have a reliable
+# `python` shim, so the generated command-example files below are project-owned.
 update:
   skip:
     - .trellis/config.yaml
@@ -49,7 +52,49 @@ update:
     - .agents/skills/trellis-meta/references/local-architecture/workspace-memory.md
     - .codex/hooks/session-start.py
     - .codex/hooks.json
-
+    - .agents/skills/trellis-before-dev/SKILL.md
+    - .agents/skills/trellis-channel/references/progress-debugging.md
+    - .agents/skills/trellis-check/SKILL.md
+    - .agents/skills/trellis-continue/SKILL.md
+    - .agents/skills/trellis-meta/references/customize-local/add-project-local-conventions.md
+    - .agents/skills/trellis-meta/references/customize-local/change-context-loading.md
+    - .agents/skills/trellis-meta/references/customize-local/change-hooks.md
+    - .agents/skills/trellis-meta/references/customize-local/change-spec-structure.md
+    - .agents/skills/trellis-meta/references/customize-local/change-task-lifecycle.md
+    - .agents/skills/trellis-meta/references/customize-local/overview.md
+    - .agents/skills/trellis-meta/references/local-architecture/spec-system.md
+    - .agents/skills/trellis-meta/references/local-architecture/task-system.md
+    - .agents/skills/trellis-meta/references/platform-files/agents.md
+    - .claude/agents/trellis-research.md
+    - .claude/commands/trellis/continue.md
+    - .claude/commands/trellis/finish-work.md
+    - .claude/hooks/inject-subagent-context.py
+    - .claude/hooks/session-start.py
+    - .claude/settings.json
+    - .claude/skills/trellis-before-dev/SKILL.md
+    - .claude/skills/trellis-brainstorm/SKILL.md
+    - .claude/skills/trellis-channel/references/progress-debugging.md
+    - .claude/skills/trellis-check/SKILL.md
+    - .claude/skills/trellis-meta/references/customize-local/add-project-local-conventions.md
+    - .claude/skills/trellis-meta/references/customize-local/change-context-loading.md
+    - .claude/skills/trellis-meta/references/customize-local/change-hooks.md
+    - .claude/skills/trellis-meta/references/customize-local/change-spec-structure.md
+    - .claude/skills/trellis-meta/references/customize-local/change-task-lifecycle.md
+    - .claude/skills/trellis-meta/references/customize-local/overview.md
+    - .claude/skills/trellis-meta/references/local-architecture/spec-system.md
+    - .claude/skills/trellis-meta/references/local-architecture/task-system.md
+    - .claude/skills/trellis-meta/references/local-architecture/workspace-memory.md
+    - .claude/skills/trellis-meta/references/platform-files/agents.md
+    - .codex/agents/trellis-check.toml
+    - .codex/agents/trellis-implement.toml
+    - .codex/agents/trellis-research.toml
+    - .trellis/scripts/add_session.py
+    - .trellis/scripts/common/developer.py
+    - .trellis/scripts/common/session_context.py
+    - .trellis/scripts/common/task_store.py
+    - .trellis/scripts/get_context.py
+    - .trellis/scripts/init_developer.py
+    - .trellis/scripts/task.py
 #-------------------------------------------------------------------------------
 # Task Lifecycle Hooks
 #-------------------------------------------------------------------------------
