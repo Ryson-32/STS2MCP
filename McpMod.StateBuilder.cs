@@ -1072,7 +1072,7 @@ public static partial class McpMod
 
         battle["round"] = combatState.RoundNumber;
         battle["turn"] = combatState.CurrentSide.ToString().ToLower();
-        battle["is_play_phase"] = CombatManager.Instance.IsPlayPhase;
+        battle["is_play_phase"] = IsCombatPlayPhase();
 
         // Enemies
         var enemies = new List<Dictionary<string, object?>>();
@@ -1564,7 +1564,7 @@ public static partial class McpMod
     {
         var state = new Dictionary<string, object?>();
 
-        var inventory = merchantRoom.Inventory;
+        var inventory = GetMerchantInventory(merchantRoom);
         if (inventory == null)
         {
             state["items"] = new List<Dictionary<string, object?>>();
