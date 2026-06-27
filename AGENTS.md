@@ -54,6 +54,14 @@
   and lessons in the shared local gameplay-learning store instead of leaving
   them only in chat.
 
+## Gameplay Automation Boundary
+
+- Default to manual gameplay decisions using MCP/API state inspection. Do not
+  run local auto-play scripts unless the user explicitly asks to use a script
+  for that run.
+- Keep experimental auto-play scripts in local-only paths, not the public repo,
+  unless the user explicitly asks to publish them.
+
 ### State Polling
 - After `combat_end_turn`, the state may show `is_play_phase: false` or `turn: enemy`. Call `get_game_state` again to advance to the next player turn.
 - Sometimes you need to call `get_game_state` twice — once to see enemy turn results, once to see your new hand.
