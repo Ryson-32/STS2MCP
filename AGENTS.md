@@ -46,6 +46,14 @@
 
 ## MCP Tool Calling Tips
 
+## Gameplay Learning
+
+- Actively use the `sts2-gameplay-learning` skill when playing STS2 through MCP,
+  reviewing a run, or answering strategy questions from prior runs.
+- For meaningful gameplay decisions and run closeout, record compact run facts
+  and lessons in the shared local gameplay-learning store instead of leaving
+  them only in chat.
+
 ### State Polling
 - After `combat_end_turn`, the state may show `is_play_phase: false` or `turn: enemy`. Call `get_game_state` again to advance to the next player turn.
 - Sometimes you need to call `get_game_state` twice — once to see enemy turn results, once to see your new hand.
