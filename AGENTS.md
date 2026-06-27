@@ -35,9 +35,9 @@
 - When frontend work touches behavior that may differ between macOS and
   Windows, leave a clear boundary, configuration entry point, or code comment
   for the other side. Do not implement unverified adaptations for the other OS.
-- Standing repo rule: after finishing verified changes, split them into
-  logical commits by module or concern, then push the completed branch to the
-  configured writable remote automatically.
+- Standing repo rule: after every verified change set, automatically split the
+  work into logical commits by module or concern, then push the completed
+  branch to the configured writable remote.
 - This is a public repository. Before every push, inspect the exact staged and
   outgoing changes for private data: secrets, tokens, passwords, private keys,
   local-only account details, machine-specific paths, and sensitive host or
