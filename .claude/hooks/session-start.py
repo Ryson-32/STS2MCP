@@ -327,9 +327,9 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next-Action: Classify the current turn before creating any Trellis task. "
-            "Simple conversation / small task asks only whether this turn should create a Trellis task. "
-            "Complex task asks whether task creation and planning are allowed."
+            "Next-Action: Classify the current turn; decide whether to continue inline "
+            "or create/restore a Trellis task when persistence is useful. "
+            "Ask the user only when scope, risk, or a required decision is unclear."
         )
 
     task_ref = active.task_path

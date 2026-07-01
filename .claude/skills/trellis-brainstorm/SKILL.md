@@ -25,7 +25,7 @@ Use this skill during Phase 1 planning to turn the user's request into clear req
 
 ## Preconditions
 
-Use this skill only after task-creation consent has been given and the user is ready to enter Trellis planning.
+Use this skill after the AI has decided a Trellis task is useful, or after the user explicitly asks for Trellis planning.
 
 If no task exists yet, create one:
 

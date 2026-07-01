@@ -144,16 +144,16 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
 ## Phase Index
 
 ```
-Phase 1: Plan    → classify, decide whether a task is needed, then write planning artifacts
+Phase 1: Plan    → classify, decide whether a Trellis task is useful, then write planning artifacts when used
 Phase 2: Execute → implement only after task status is in_progress
 Phase 3: Finish  → verify, update spec, commit, and wrap up
 ```
 
 ### Request Triage
 
-- Simple conversation or small task: the AI decides whether a Trellis task adds value. Skip Trellis when the work can be handled inline without useful persistent artifacts.
-- Complex task: the AI decides whether to create or restore a Trellis task. Use a task when the work needs persisted planning, cross-session tracking, deployment/release evidence, or multiple verifiable steps.
-- Creating a task is an AI workflow decision, not a separate user-approval gate. Planning still happens first when a task is used.
+- Simple conversation, read-only review, or small task: the AI decides whether a Trellis task adds value. Skip Trellis when the work can be handled inline without useful persistent artifacts.
+- Complex multi-step implementation, deployment/release work, production operations, cross-session work, or high-risk changes: the AI may create or restore a Trellis task directly and enter planning when persistence would help, unless the user explicitly asks not to.
+- Do not ask just to ask whether to create a Trellis task. Ask the user only when scope, risk, or a required decision is unclear. Planning still happens first when a task is used.
 
 ### Planning Artifacts
 
@@ -175,12 +175,13 @@ Create new children with `task.py create "<title>" --slug <name> --parent <paren
 
 [workflow-state:no_task]
 No active task. First classify the current turn, then decide whether a Trellis task is useful.
-Simple conversation / small task: skip Trellis when inline work is sufficient; create a task only when persistence would help.
-Complex task: create or restore a Trellis task when persisted planning, deployment/release evidence, or cross-session tracking is useful; otherwise keep the inline scope small and explicit.
+Simple conversation / read-only review / small task: continue inline when persistence would not help.
+Complex multi-step implementation, deployment/release work, production operations, cross-session work, or high-risk changes: create or restore a Trellis task directly and enter planning when persisted context would help, unless the user explicitly says not to.
+Ask the user only when scope, risk, or a required decision is unclear; do not ask merely to confirm task creation.
 [/workflow-state:no_task]
 
 ### Phase 1: Plan
-- 1.0 Create task `[required · once]` (when the AI decides a task is needed)
+- 1.0 Create task `[required when a task is useful]` (AI decides; respect explicit user no-task / read-only constraints)
 - 1.1 Requirement exploration `[required · repeatable]` (`prd.md`; complex tasks also need `design.md` + `implement.md`)
 - 1.2 Research `[optional · repeatable]`
 - 1.3 Configure context `[required · once]` — Claude Code, Cursor, OpenCode, Codex, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi (sub-agent-dispatch platforms only; inline platforms skip)
@@ -309,7 +310,7 @@ python ./.trellis/scripts/get_context.py --mode phase --step <step>
 
 Goal: classify the request, decide whether a task is needed, and produce the planning artifacts required before implementation.
 
-#### 1.0 Create task `[required · once]`
+#### 1.0 Create task `[required when a task is useful]`
 
 Create the task directory when the AI decides a task adds value. The command sets status to `planning`, writes `task.json`, creates a default `prd.md`, and auto-targets the new task when session identity is available:
 

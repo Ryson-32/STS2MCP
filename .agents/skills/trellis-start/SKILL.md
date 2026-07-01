@@ -47,7 +47,7 @@ From Step 1 you know the current task and status. Check the task directory:
   ```bash
   python ./.trellis/scripts/get_context.py --mode phase --step 2.1 --platform codex
   ```
-- **No active task** → classify first. For simple conversation / small task, ask only whether this turn should create a Trellis task. For complex work, ask whether you may create a Trellis task and enter planning. If the user says no, skip Trellis for this session.
+- **No active task** → classify first. The main agent decides whether this turn needs a Trellis task. Simple conversation, read-only review, or small tasks can continue inline. Complex multi-step implementation, deployment/release work, production operations, cross-session work, or high-risk changes should create or restore a task directly and enter planning when persistence would help, unless the user explicitly says not to. Ask the user only when scope, risk, or a required decision is unclear, not just to ask whether to create a task.
 
 ---
 
