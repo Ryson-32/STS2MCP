@@ -30,7 +30,7 @@ Use this skill after the AI decides a Trellis task adds value and the session is
 If no task exists yet, create one:
 
 ```bash
-TASK_DIR=$(python ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
+TASK_DIR=$(python3 ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
 ```
 
 Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
