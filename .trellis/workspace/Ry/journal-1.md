@@ -18,7 +18,9 @@ Verified both checkouts, reconciled local-only files, exercised shared build and
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- Verified both Git checkouts and reconciled device-local configuration without
+  copying machine-specific paths into shared files.
+- Documented safe macOS runtime detection for SSH non-login shells.
 
 ### Git Commits
 
@@ -29,7 +31,13 @@ Verified both checkouts, reconciled local-only files, exercised shared build and
 
 ### Testing
 
-- Validation was not recorded for this session.
+- Windows and macOS: locked MCP dependency sync, CLI help, Python compile, and
+  import checks passed.
+- Windows and macOS: Release build completed with zero warnings and zero
+  errors; `dotnet test` exited successfully with no test project present.
+- Windows: sandbox install copied the DLL and manifest while preserving the
+  existing local configuration hash.
+- Task validation, `git diff --check`, and outgoing privacy scans passed.
 
 ### Status
 
