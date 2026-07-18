@@ -1,0 +1,2 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Apply the cross-platform boundary checklist while reconciling device-local configuration and shared repository state."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search existing build and configuration entry points before adding or changing any compatibility behavior."}

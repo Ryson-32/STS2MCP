@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Confirm the repository quality layer adds no project-specific checks beyond the discovered README and CONTRIBUTING workflows."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Re-check that local-only configuration remains device-scoped and shared files remain path-agnostic."}
