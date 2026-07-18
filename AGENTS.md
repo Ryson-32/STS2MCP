@@ -35,6 +35,10 @@
 - When frontend work touches behavior that may differ between macOS and
   Windows, leave a clear boundary, configuration entry point, or code comment
   for the other side. Do not implement unverified adaptations for the other OS.
+- When validating macOS tools over SSH, do not treat a non-login shell's
+  reduced `PATH` as proof that a runtime is missing. Probe the user's login
+  shell or resolve the configured command first, without hard-coding a
+  machine-specific package-manager prefix into shared files.
 - Standing repo rule: after every verified change set, automatically split the
   work into logical commits by module or concern, then push the completed
   branch to the configured writable remote.
