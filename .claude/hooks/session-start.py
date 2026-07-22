@@ -206,6 +206,7 @@ def _detect_platform(input_data: dict) -> str | None:
         "QODER_PROJECT_DIR": "qoder",
         "KIRO_PROJECT_DIR": "kiro",
         "COPILOT_PROJECT_DIR": "copilot",
+        "TRAE_PROJECT_DIR": "trae",
     }
     for env_name, platform in env_map.items():
         if os.environ.get(env_name):
@@ -342,9 +343,9 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next-Action: Classify the current turn; decide whether to continue inline "
-            "or create/restore a Trellis task when persistence is useful. "
-            "Ask the user only when scope, risk, or a required decision is unclear."
+            "Next-Action: Classify the current turn and decide whether Trellis persistence is useful. "
+            "Continue inline when persistence would not help; create a task directly for complex "
+            "work unless the user opts out. Ask only for unresolved scope, risk, or product decisions."
         )
 
     task_ref = active.task_path
@@ -407,17 +408,21 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
         next_bits: list[str] = []
         if missing_complex:
             next_bits.append(
-                "Lightweight task can request start review with PRD-only; "
+                "Lightweight task may start with PRD-only under the same authorization rule; "
                 f"complex task must add {', '.join(missing_complex)} before start"
             )
         else:
-            next_bits.append("Planning artifacts are present; ask for review before `task.py start`")
+            next_bits.append("planning artifacts are present; present or restate the final planning summary")
         if not jsonl_ready:
-            next_bits.append("curate `implement.jsonl` and `check.jsonl` before sub-agent mode start")
+            next_bits.append(
+                "leave JSONL manifests seed-only unless extra spec or research context is needed"
+            )
         return (
             f"Status: PLANNING\nTask: {task_title}\n"
             f"Present: {present_line}\n"
-            f"Next-Action: {'; '.join(next_bits)}. Do not enter implementation until the user confirms start."
+            f"Next-Action: {'; '.join(next_bits)}. Use an existing explicit implementation "
+            "authorization when the final plan stays within its scope; ask only when authorization "
+            "is absent or planning materially changes user-owned scope, risk, or acceptance behavior."
         )
 
     return (

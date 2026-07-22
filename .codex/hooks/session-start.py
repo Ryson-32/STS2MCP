@@ -231,8 +231,9 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next: Classify the current turn. The AI decides whether a Trellis task "
-            "adds value before creating or restoring one."
+            "Next: Classify the current turn and decide whether Trellis persistence is useful. "
+            "Continue inline when persistence would not help; create a task directly for complex "
+            "work unless the user opts out. Ask only for unresolved scope, risk, or product decisions."
         )
 
     task_ref = active.task_path
@@ -279,11 +280,17 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
 
     if task_status == "planning":
         if has_design and has_implement:
-            next_action = "Review planning artifacts with the user before `task.py start`."
+            next_action = (
+                "Present or restate the final planning summary. If the current request or an "
+                "existing user message explicitly authorizes implementation and planning has "
+                "not materially changed user-owned scope, risk, or acceptance behavior, run "
+                "`task.py start`; otherwise ask for approval."
+            )
         else:
             next_action = (
-                "Lightweight task can ask for start review with PRD-only; "
-                "complex task must add design.md and implement.md before `task.py start`."
+                "Lightweight task may start with PRD-only under the same authorization rule; "
+                "complex task must add design.md and implement.md before `task.py start`. "
+                "JSONL manifests are optional and should be curated only for extra spec or research context."
             )
         return (
             f"Status: PLANNING\nTask: {task_title}\nPresent: {present_line}\n"

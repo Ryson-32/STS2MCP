@@ -144,16 +144,17 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed 
 ## Phase Index
 
 ```
-Phase 1: Plan    → classify, decide whether a Trellis task is useful, then write planning artifacts when used
+Phase 1: Plan    → classify, create a task when persistence helps, then write planning artifacts
 Phase 2: Execute → implement only after task status is in_progress
 Phase 3: Finish  → verify, update spec, commit, and wrap up
 ```
 
 ### Request Triage
 
-- Simple conversation, read-only review, or small task: the AI decides whether a Trellis task adds value. Skip Trellis when the work can be handled inline without useful persistent artifacts.
-- Complex multi-step implementation, deployment/release work, production operations, cross-session work, or high-risk changes: the AI may create or restore a Trellis task directly and enter planning when persistence would help, unless the user explicitly asks not to.
-- Do not ask just to ask whether to create a Trellis task. Ask the user only when scope, risk, or a required decision is unclear. Planning still happens first when a task is used.
+- Simple conversation, read-only review, or small task: continue inline when persistence would not help; the top-level AI may still create a task directly when a durable record is useful.
+- Complex multi-step, release/install, production, cross-session, or high-risk work: create a Trellis task directly and enter planning unless the user explicitly opts out of task persistence.
+- Ask the user only when scope, risk, or a required product decision is unclear; never ask solely to confirm task creation.
+- Creating a task records planning state only. It does not broaden implementation or external-side-effect authority beyond the user's request.
 
 ### Planning Artifacts
 
@@ -174,17 +175,17 @@ Create new children with `task.py create "<title>" --slug <name> --parent <paren
 <!-- Per-turn breadcrumb: shown when there is no active task (before Phase 1) -->
 
 [workflow-state:no_task]
-No active task. First classify the current turn, then decide whether a Trellis task is useful.
-Simple conversation / read-only review / small task: continue inline when persistence would not help.
-Complex multi-step implementation, deployment/release work, production operations, cross-session work, or high-risk changes: create or restore a Trellis task directly and enter planning when persisted context would help, unless the user explicitly says not to.
-Ask the user only when scope, risk, or a required decision is unclear; do not ask merely to confirm task creation.
+No active task. First classify the current turn, then decide whether Trellis persistence is useful.
+Simple conversation, read-only review, or small task: continue inline when persistence would not help.
+Complex multi-step, release/install, production, cross-session, or high-risk work: create a Trellis task directly and enter planning unless the user explicitly opts out.
+Ask the user only when scope, risk, or a required product decision is unclear; never ask solely to confirm task creation. Creating planning metadata does not broaden implementation authority.
 [/workflow-state:no_task]
 
 ### Phase 1: Plan
-- 1.0 Create task `[required when a task is useful]` (AI decides; respect explicit user no-task / read-only constraints)
+- 1.0 Create task `[required · once]` (when the top-level AI judges persistence useful; no separate consent is required)
 - 1.1 Requirement exploration `[required · repeatable]` (`prd.md`; complex tasks also need `design.md` + `implement.md`)
 - 1.2 Research `[optional · repeatable]`
-- 1.3 Configure context `[required · once]` — Claude Code, Cursor, OpenCode, Codex, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Reasonix, Grok, Kimi Code (sub-agent-dispatch platforms only; inline platforms skip)
+- 1.3 Configure context `[on demand]` — curate JSONL manifests only when sub-agents need extra spec or research context (inline platforms skip)
 - 1.4 Activate task `[required · once]` (review gate, then `task.py start`; status → in_progress)
 - 1.5 Completion criteria
 
@@ -192,9 +193,9 @@ Ask the user only when scope, risk, or a required decision is unclear; do not as
 
 [workflow-state:planning]
 Load `trellis-brainstorm`; stay in planning.
-Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
+Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`. Before `task.py start`, confirm explicit implementation authorization exists; the current or earlier request counts when the final scoped plan remains within it. Ask again only when authorization is absent or planning materially changes user-owned scope, risk, or acceptance behavior.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
-Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research manifests before start.
+Sub-agent mode: curate `implement.jsonl` and `check.jsonl` only when extra spec or research context is needed; seed-only manifests do not block start.
 [/workflow-state:planning]
 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 when codex.dispatch_mode=inline.
@@ -205,7 +206,7 @@ Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research mani
 
 [workflow-state:planning-inline]
 Load `trellis-brainstorm`; stay in planning.
-Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
+Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`. Before `task.py start`, confirm explicit implementation authorization exists; the current or earlier request counts when the final scoped plan remains within it. Ask again only when authorization is absent or planning materially changes user-owned scope, risk, or acceptance behavior.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-before-dev`.
 [/workflow-state:planning-inline]
@@ -291,7 +292,7 @@ When a user request matches one of these intents inside an active task, route fi
 
 ### Guardrails
 
-- Task creation approval is not implementation approval; implementation waits for `task.py start` after artifact review.
+- Task creation records planning metadata only; implementation still waits for `task.py start` after artifact review and remains within the user's authorized scope.
 - PRD-only is valid for lightweight tasks; complex tasks need `design.md` + `implement.md`.
 - Planning must be persisted to task artifacts; checks must run before reporting completion.
 
@@ -308,11 +309,11 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 
 ## Phase 1: Plan
 
-Goal: classify the request, decide whether a task is needed, and produce the planning artifacts required before implementation.
+Goal: classify the request, create a task when persistence is useful, and produce the planning artifacts required before implementation.
 
-#### 1.0 Create task `[required when a task is useful]`
+#### 1.0 Create task `[required · once]`
 
-Create the task directory when the AI decides a task adds value. The command sets status to `planning`, writes `task.json`, creates a default `prd.md`, and auto-targets the new task when session identity is available:
+Create the task directory when the top-level AI judges durable planning useful. Do not ask the user solely to approve task creation. The command sets status to `planning`, writes `task.json`, creates a default `prd.md`, and auto-targets the new task when session identity is available:
 
 ```bash
 python3 ./.trellis/scripts/task.py create "<task title>" --slug <name>
@@ -379,11 +380,11 @@ Brainstorm and research can interleave freely — pause to research a technical 
 
 **Key principle**: Research output must be written to files, not left only in the chat. Conversations get compacted; files don't.
 
-#### 1.3 Configure context `[required · once]`
+#### 1.3 Configure context `[on demand]`
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Reasonix, Trae, Grok, Kimi Code]
 
-Curate `implement.jsonl` and `check.jsonl` so the Phase 2 sub-agents get the right spec/research context. These files were seeded on `task create` with a single self-describing `_example` line; your job here is to fill in real entries.
+When Phase 2 sub-agents need extra spec or research context, curate `implement.jsonl` and `check.jsonl`. These files are seeded on `task create` with a self-describing `_example` line; leave that seed-only state unchanged when no extra context is needed.
 
 **Location**: `{TASK_DIR}/implement.jsonl` and `{TASK_DIR}/check.jsonl` (already exist).
 
@@ -422,9 +423,9 @@ python3 ./.trellis/scripts/task.py add-context "$TASK_DIR" check "<path>" "<reas
 
 Delete the seed `_example` line once real entries exist (optional — it's skipped automatically by consumers).
 
-Skip when: `implement.jsonl` and `check.jsonl` have agent-curated entries (the seed row alone doesn't count).
+Use when: the task needs extra spec or research context beyond the planning artifacts.
 
-Skip this step only when both files already have real curated entries.
+Otherwise skip this step; seed-only manifests are accepted by runtime consumers.
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Reasonix, Trae, Grok, Kimi Code]
 
@@ -442,7 +443,7 @@ After artifact review, flip the task status to `in_progress`:
 python3 ./.trellis/scripts/task.py start <task-dir>
 ```
 
-For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-capable platforms, curate jsonl manifests when extra spec or research context is needed; seed-only manifests are tolerated by consumers.
+For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-capable platforms, curate JSONL manifests only when extra spec or research context is needed; seed-only manifests are accepted by runtime consumers.
 
 After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in_progress]`, and the rest of Phase 2 / 3 follows.
 
@@ -652,7 +653,7 @@ This section is for developers who want to modify the Trellis workflow itself. A
 ### Changing what a step means
 
 Edit the corresponding step's walkthrough body in the Phase 1 / 2 / 3 sections above. Critical invariants:
-- No active task must triage first; the AI decides whether creating or restoring a Trellis task adds value.
+- With no active task, triage first: continue inline when persistence would not help, or create a task directly when it would. Ask only for unresolved scope, risk, or product decisions, never for task creation alone.
 - Planning must distinguish lightweight PRD-only tasks from complex tasks that require `prd.md`, `design.md`, and `implement.md` before start.
 - Every required execution path must keep the Phase 3.4 commit reminder reachable before `/trellis:finish-work`.
 
