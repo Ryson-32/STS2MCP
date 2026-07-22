@@ -10,6 +10,18 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "^(?:trellis-implement|trellis-check|trellis-research)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/run-python.cjs .codex/hooks/inject-subagent-context.py",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }
