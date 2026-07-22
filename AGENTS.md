@@ -14,6 +14,20 @@
 - Do not create PRs, tag releases, or deploy unless the user explicitly asks
   for that remote action. Pushes follow the cross-device rules below.
 
+## Durable Project Knowledge
+
+- When the user states an important reusable instruction, principle, design
+  intent, decision, or acceptance boundary, do not leave it only in chat.
+  Automatically preserve the intent while rewriting it into concise,
+  unambiguous, actionable language, then record it in the correct durable
+  surface in the same change set: repository-wide collaboration policy in
+  `AGENTS.md`; executable implementation or API contracts in the relevant
+  `.trellis/spec/**`; user-facing behavior or operational procedures in the
+  adjacent documentation.
+- Do not persist one-off requests, temporary status, unverified assumptions,
+  secrets, credentials, or machine-specific details. Ask before recording only
+  when the durable intent or correct target surface is genuinely ambiguous.
+
 ## Cross-Device Collaboration
 
 - This repository may be edited from both macOS and Windows checkouts. Treat
