@@ -14,9 +14,7 @@ session_commit_message: "chore: record journal"
 # Maximum lines per journal file before rotating to a new one
 max_journal_lines: 2000
 
-# User-owned workflow and cross-platform hook adaptations. Keep this list
-# exact; remove an entry when the local behavior is no longer different from
-# upstream.
+# Preserve only intentional project, authorization, and cross-platform hook behavior.
 update:
   skip:
     - .trellis/workflow.md
