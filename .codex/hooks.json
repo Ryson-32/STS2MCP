@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .codex/hooks/run-python.cjs .codex/hooks/inject-workflow-state.py",
+            "command": "python -X utf8 .codex/hooks/inject-workflow-state.py",
             "timeout": 15
           }
         ]
@@ -17,11 +17,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .codex/hooks/run-python.cjs .codex/hooks/inject-subagent-context.py",
+            "command": "python -X utf8 .codex/hooks/inject-subagent-context.py",
             "timeout": 15
           }
         ]
       }
     ]
-  }
+  },
+  "env": {}
 }

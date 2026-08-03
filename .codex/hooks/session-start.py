@@ -231,9 +231,8 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next: Classify the current turn and decide whether Trellis persistence is useful. "
-            "Continue inline when persistence would not help; create a task directly for complex "
-            "work unless the user opts out. Ask only for unresolved scope, risk, or product decisions."
+            "Next: Classify first. Continue inline for small/read-only work; create a task "
+            "directly when complex work benefits from persistence. Do not ask only for task-creation consent."
         )
 
     task_ref = active.task_path
@@ -241,7 +240,7 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if active.stale or not task_dir.is_dir():
         return (
             f"Status: STALE POINTER\nTask: {task_ref}\n"
-            "Next: Task directory not found. Run: python3 ./.trellis/scripts/task.py finish"
+            "Next: Task directory not found. Run: python ./.trellis/scripts/task.py finish"
         )
 
     task_json_path = task_dir / "task.json"
@@ -258,7 +257,7 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if task_status == "completed":
         return (
             f"Status: COMPLETED\nTask: {task_title}\n"
-            f"Next: Archive with `python3 ./.trellis/scripts/task.py archive {task_dir.name}` "
+            f"Next: Archive with `python ./.trellis/scripts/task.py archive {task_dir.name}` "
             "or start a new task."
         )
 
@@ -281,16 +280,13 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if task_status == "planning":
         if has_design and has_implement:
             next_action = (
-                "Present or restate the final planning summary. If the current request or an "
-                "existing user message explicitly authorizes implementation and planning has "
-                "not materially changed user-owned scope, risk, or acceptance behavior, run "
-                "`task.py start`; otherwise ask for approval."
+                "If current implementation authorization covers the final scope, run `task.py start` "
+                "without a formal second approval; otherwise ask only for the unresolved decision."
             )
         else:
             next_action = (
-                "Lightweight task may start with PRD-only under the same authorization rule; "
-                "complex task must add design.md and implement.md before `task.py start`. "
-                "JSONL manifests are optional and should be curated only for extra spec or research context."
+                "Lightweight task may proceed with PRD-only when current authorization covers the scope; "
+                "complex task must add design.md and implement.md before `task.py start`."
             )
         return (
             f"Status: PLANNING\nTask: {task_title}\nPresent: {present_line}\n"
@@ -408,7 +404,7 @@ def _build_compact_current_state(
         try:
             task_count = sum(1 for _ in iter_active_tasks(get_tasks_dir(repo_root)))
             lines.append(
-                f"Active tasks: {task_count} total. Use `python3 ./.trellis/scripts/task.py list --mine` only if needed."
+                f"Active tasks: {task_count} total. Use `python ./.trellis/scripts/task.py list --mine` only if needed."
             )
         except Exception:
             pass  # Optional task summary; keep compact state available.
@@ -467,7 +463,7 @@ def _build_workflow_toc(workflow_path: Path) -> str:
 
     out_lines = [
         "# Development Workflow - Session Summary",
-        "Full guide: .trellis/workflow.md. Step detail: `python3 ./.trellis/scripts/get_context.py --mode phase --step <X.Y>`.",
+        "Full guide: .trellis/workflow.md. Step detail: `python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>`.",
         "",
     ]
 
@@ -530,7 +526,7 @@ Trellis compact SessionStart context. Use it to orient the session; load details
 
     output.write(
         "Discover more via: "
-        "`python3 ./.trellis/scripts/get_context.py --mode packages`\n"
+        "`python ./.trellis/scripts/get_context.py --mode packages`\n"
     )
     output.write("</guidelines>\n\n")
 

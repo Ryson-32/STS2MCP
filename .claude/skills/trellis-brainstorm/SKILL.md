@@ -7,9 +7,9 @@ description: "Guides collaborative requirements discovery before implementation.
 
 ## Non-Negotiable Planning Contract
 
-Creating a task and entering planning does not itself authorize implementation. Implementation requires an explicit user request or approval; a clear initial request to implement the scoped work can provide that authorization.
+An explicit request to build, implement, fix, refactor, or continue authorizes implementation within the stated scope. Creating planning metadata does not broaden that scope.
 
-Do not manufacture a second approval turn. Once user-owned decisions are resolved and the final planning summary is presented, existing explicit implementation authorization remains valid unless the artifacts materially change scope, risk, or acceptance behavior.
+Do not require a formal second approval after the final planning summary when the user's existing implementation authorization still covers the final goal, risk, and external effects. Ask again only when a material user-owned decision remains or the scope has expanded.
 
 While any user-owned product, scope, UX, compatibility, risk, or acceptance decision remains unresolved, end the turn with exactly one highest-value question. Do not edit product code, dispatch implementation, or run `task.py start`.
 
@@ -29,12 +29,12 @@ Use this skill during Phase 1 planning to turn the user's request into clear req
 
 ## Preconditions
 
-Use this skill after the top-level AI judges Trellis persistence useful. Creating the task records planning state only and does not by itself authorize implementation.
+Use this skill when a task needs collaborative planning. A task may be created directly when persistence is useful; no separate task-creation consent is required.
 
 If no task exists yet, create one:
 
 ```bash
-TASK_DIR=$(python3 ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
+TASK_DIR=$(python ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
 ```
 
 Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
@@ -57,8 +57,8 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
 5. After each user answer, update `prd.md`, recompute the decision inventory, and repeat from step 2.
 6. When no user-owned decision remains, create or update `design.md` and `implement.md` for complex tasks.
 7. Run the requirement convergence gate, then the PRD convergence pass.
-8. Present the final planning summary. Do not run `task.py start` or edit product code until explicit implementation authorization exists.
-9. If an initial or later user request already authorizes the latest scoped plan, proceed without demanding a separate subsequent approval message. If authorization is absent or the artifacts materially change user-owned scope, risk, or acceptance behavior, present the updated summary and ask before starting.
+8. Present the final planning summary. If the user's explicit implementation request still covers the final scope, `task.py start` and implementation may continue without waiting for a ceremonial reply.
+9. If the artifacts materially change scope, risk, compatibility, external effects, or acceptance behavior, ask for the newly required decision before implementation.
 
 Do not invent a project-specific product/spec hierarchy. If the repository already has product, domain, or spec docs, use them. If it does not, proceed with the evidence that exists.
 
@@ -77,9 +77,9 @@ Do not ask process questions such as whether to search, inspect files, or contin
 
 Recommendations are not default selections. Never choose a recommended product decision on the user's behalf merely because the user asked for implementation.
 
-Do not manufacture clarification questions when the request and repository evidence already resolve every decision. Proceed directly to the final planning summary, then use existing explicit implementation authorization or ask for it if none exists.
+Do not manufacture clarification questions when the request and repository evidence already resolve every decision. In that case, proceed directly to the final planning summary and continue under the existing implementation authorization.
 
-The final review is a required phase-transition gate, not a prohibited process question. Task creation alone does not satisfy it; a clear initial implementation request remains valid when the final summary stays within its authorized scope.
+The final review is a convergence check, not a ceremonial permission gate. The initial implementation request remains valid while the final scope, risk, external effects, and acceptance behavior stay within it.
 
 ## Thinking Framework: First Principles Analysis
 
@@ -135,7 +135,7 @@ Before final review, verify all of the following:
 - blocking open questions are empty
 - technical unknowns are researched or explicitly deferred without changing MVP behavior
 
-Lightweight tasks may omit `design.md` and `implement.md`; they may not skip evidence inspection, requirement convergence, the final planning summary, or explicit implementation authorization.
+Lightweight tasks may omit `design.md` and `implement.md`; they may not skip evidence inspection, requirement convergence, final review, or valid implementation authorization.
 
 The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Criteria, Key Decisions, relevant Risks or Deferred Items, and artifact status.
 
@@ -167,7 +167,7 @@ The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Cr
 
 Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start`.
 
-`implement.md` is not a replacement for `implement.jsonl`. Use JSONL manifests only when sub-agents need extra spec or research context; seed-only manifests do not block `task.py start`.
+`implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, use `implement.jsonl` and `check.jsonl` only when curated context handoff is useful. When used, entries must resolve to real spec/research files; absent or seed-only manifests do not block `task.py start`. Inline workflows normally load context through `trellis-before-dev`.
 
 ## PRD Convergence Pass
 
@@ -193,8 +193,8 @@ Before declaring planning ready:
 - Repository-answerable questions have already been answered through inspection.
 - Blocking open questions are empty.
 - Complex tasks have `design.md` and `implement.md`.
-- JSONL manifests are curated when sub-agents need extra spec or research context; otherwise seed-only manifests are acceptable.
-- The latest final planning summary has been presented to the user.
-- Explicit implementation authorization exists; a clear initial request may count when the final scoped plan has not materially changed.
+- Any JSONL manifest used for handoff contains real, relevant, resolvable entries; otherwise it may remain absent or seed-only.
+- The final planning summary is available.
+- Existing implementation authorization still covers the final scope, or any newly required user decision has been resolved.
 
-Do not start without explicit implementation authorization. An initial request counts only when it clearly authorizes implementation of the final scoped plan.
+Do not start implementation merely because the user originally asked for implementation.

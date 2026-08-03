@@ -11,7 +11,6 @@ mcp/.venv/
 # Claude Code
 # .claude/
 .mcp.json
-CLAUDE.md
 GUIDE.md
 
 # Qoder
