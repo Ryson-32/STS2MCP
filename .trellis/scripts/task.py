@@ -443,11 +443,11 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            "implement.jsonl / check.jsonl are now seeded on `task.py create` for",
+            "implement.jsonl / check.jsonl are created on demand during planning",
             file=sys.stderr,
         )
         print(
-            "sub-agent-capable platforms and curated by the AI during planning when needed.",
+            "with `task.py add-context` or direct editing when explicit handoff is useful.",
             file=sys.stderr,
         )
         print("See .trellis/workflow.md planning artifact guidance or run:", file=sys.stderr)

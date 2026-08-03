@@ -39,7 +39,7 @@ python ./.trellis/scripts/get_context.py --mode packages   # list packages / lay
 
 ### Task System
 
-Every task has its own directory under `.trellis/tasks/{MM-DD-name}/` holding `task.json`, `prd.md`, optional `design.md`, optional `implement.md`, optional `research/`, and context manifests (`implement.jsonl`, `check.jsonl`) for sub-agent-capable platforms.
+Every task has its own directory under `.trellis/tasks/{MM-DD-name}/` holding `task.json`, `prd.md`, optional `design.md`, optional `implement.md`, optional `research/`, and optional context manifests (`implement.jsonl`, `check.jsonl`) when explicit sub-agent handoff is useful.
 
 ```bash
 # Task lifecycle
@@ -52,8 +52,8 @@ python ./.trellis/scripts/task.py list [--mine] [--status <s>]
 python ./.trellis/scripts/task.py list-archive
 
 # Code-spec context (injected into implement/check agents via JSONL).
-# `implement.jsonl` / `check.jsonl` are seeded on `task create` for sub-agent-capable
-# platforms; the AI curates real spec + research entries during planning when needed.
+# `implement.jsonl` / `check.jsonl` are created on demand by `add-context` or by
+# direct editing only when a task benefits from explicit sub-agent context handoff.
 python ./.trellis/scripts/task.py add-context <name> <action> <file> <reason>
 python ./.trellis/scripts/task.py list-context <name> [action]
 python ./.trellis/scripts/task.py validate <name>
@@ -160,7 +160,7 @@ Phase 3: Finish  → verify, update spec, commit, and wrap up
 - `prd.md` — requirements, constraints, and acceptance criteria. Do not put technical design or execution checklists here.
 - `design.md` — technical design for complex tasks: boundaries, contracts, data flow, tradeoffs, compatibility, rollout / rollback shape.
 - `implement.md` — execution plan for complex tasks: ordered checklist, validation commands, review gates, and rollback points.
-- `implement.jsonl` / `check.jsonl` — spec and research manifests for sub-agent context. They do not replace `implement.md`.
+- `implement.jsonl` / `check.jsonl` — optional spec and research manifests for explicit sub-agent context handoff. They do not replace `implement.md`.
 - Lightweight tasks may be PRD-only. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start`.
 
 ### Parent / Child Task Trees
@@ -379,13 +379,13 @@ Brainstorm and research can interleave freely — pause to research a technical 
 
 **Key principle**: Research output must be written to files, not left only in the chat. Conversations get compacted; files don't.
 
-#### 1.3 Configure context `[required · once]`
+#### 1.3 Configure context `[optional · repeatable]`
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
-When explicit context handoff is useful, curate `implement.jsonl` and `check.jsonl` so Phase 2 sub-agents get the right spec/research context. Small or self-contained tasks may omit these manifests. These files were seeded on `task create` with a single self-describing `_example` line; your job here is to fill in real entries.
+When explicit context handoff is useful, create or curate `implement.jsonl` and `check.jsonl` so Phase 2 sub-agents get the right spec/research context. Small or self-contained tasks omit these manifests.
 
-**Location**: `{TASK_DIR}/implement.jsonl` and `{TASK_DIR}/check.jsonl` (already exist).
+**Location**: `{TASK_DIR}/implement.jsonl` and `{TASK_DIR}/check.jsonl` (created on first `add-context` use or by direct editing).
 
 **Format**: one JSON object per line — `{"file": "<path>", "reason": "<why>"}`. Paths are repo-root relative.
 
@@ -420,7 +420,7 @@ python ./.trellis/scripts/task.py add-context "$TASK_DIR" implement "<path>" "<r
 python ./.trellis/scripts/task.py add-context "$TASK_DIR" check "<path>" "<reason>"
 ```
 
-Delete the seed `_example` line once real entries exist (optional — it's skipped automatically by consumers).
+Do not create placeholder rows. Every manifest that exists should contain only real, relevant context entries.
 
 When a manifest is used, every real entry must resolve to an existing relevant file. A seed-only manifest is treated as absent and does not block `task.py start`.
 
@@ -442,7 +442,7 @@ After planning converges and the current user authorization covers the final imp
 python ./.trellis/scripts/task.py start <task-dir>
 ```
 
-For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-dispatch platforms, `implement.jsonl` and `check.jsonl` must both have real curated entries before start. Runtime consumers tolerate missing or seed-only manifests for compatibility, but that tolerance is not a planning-ready state.
+For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. JSONL manifests remain optional on every platform; when present, they must contain real, relevant, resolvable context entries.
 
 After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in_progress]`, and the rest of Phase 2 / 3 follows.
 

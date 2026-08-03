@@ -395,17 +395,10 @@ def cmd_create(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
 
-    # Seed implement.jsonl / check.jsonl for sub-agent-capable platforms.
-    # Agent curates real entries during planning when the task needs them.
-    # Agent-less platforms (Kilo / Antigravity / Devin) skip this — they
-    # load specs via the trellis-before-dev skill instead of JSONL.
+    # JSONL context manifests are intentionally on demand. The first
+    # add-context call creates the selected file; small and self-contained
+    # tasks should not carry placeholder manifests.
     seeded_jsonl = False
-    if _has_subagent_platform(repo_root):
-        for jsonl_name in ("implement.jsonl", "check.jsonl"):
-            jsonl_path = task_dir / jsonl_name
-            if not jsonl_path.exists():
-                _write_seed_jsonl(jsonl_path)
-        seeded_jsonl = True
 
     # Handle --parent: establish bidirectional link
     if args.parent:
