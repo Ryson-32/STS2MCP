@@ -169,7 +169,7 @@
     ".trellis/spec/shared/rule-ownership-and-precedence.md": "1633d1ab3ede5582a49d804a7315afd219650d6c828a65f3e44060d5e55ff75f",
     ".trellis/spec/shared/safe-workflow-and-efficiency.md": "bac6e2289999bff048344e8078ad761559ba94caa54409821d183a7033a8c1ee",
     ".trellis/spec/shared/sensitive-data.md": "7539a5c93d8b083a255be569ae9f075c465043e3cd0f97f0c8d2007f65959eb6",
-    ".trellis/spec/shared/shell-and-command-portability.md": "287821bfae2dae1c78c3192ab88b3312a277c84206be21752a43e4888a205df0",
+    ".trellis/spec/shared/shell-and-command-portability.md": "8b631a8569bc40ad3732b75972d0e9aefa6ea9f7ed18b7bdb3c39b5bc2fa1e58",
     ".trellis/spec/shared/trellis-project-state.md": "b629cd899a861ace2004c9621dcbe08cbac3313459bf2f334468bfcc161668b4",
     "AGENTS.md": "76f0e9b5ac40e19269f90bde0f2df90f3a81541f21aeabc2d8d21964a358348d"
   }
