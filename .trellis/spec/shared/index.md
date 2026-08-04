@@ -16,19 +16,21 @@
 
 ## 规范索引
 
+先按任务对象同时检查本表、项目索引和相关 package 或 guides 入口；一项请求可以命中多处。索引只负责定位：计划或执行前必须打开所有直接相关链接的正文，不能把看见文件名当成已经加载规范。
+
 | 规范 | 什么时候读取 |
 |---|---|
 | [规则归属与优先级](rule-ownership-and-precedence.md) | 新增、迁移、合并或修改长期规则时 |
 | [双端 Git 协作](cross-device-git.md) | Mac/Windows 开工、交接、提交或同步时 |
 | [上游跟踪与分叉治理](upstream-fork-governance.md) | 仓库跟踪外部上游并长期保留本地或私有偏离时 |
 | [Trellis 项目状态](trellis-project-state.md) | 更新 Trellis、处理跟踪/忽略或 Registry 时 |
-| [长期知识沉淀](durable-knowledge.md) | 用户提出长期指令、设计原则或验收边界时 |
-| [证据与验证](evidence-and-verification.md) | 调查、测试、完成声明和最终交接时 |
+| [长期知识沉淀](durable-knowledge.md) | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 |
+| [证据与验证](evidence-and-verification.md) | 调查、检索或下载文献、获取或生成数据与产物、测试、完成声明和最终交接时 |
 | [跨平台验证](cross-platform-validation.md) | 路径、工具、数据或行为可能因系统不同而变化时 |
 | [敏感信息](sensitive-data.md) | 处理日志、配置、远端系统、账号或准备 push 时 |
 | [工程原则与最小改动](engineering-principles.md) | 设计实现、重构或评估是否需要新增抽象时 |
 | [安全高效工作流](safe-workflow-and-efficiency.md) | 从调查到交付组织步骤、并行和 ownership 时 |
-| [权限与变更安全](authority-and-change-safety.md) | 删除、迁移、push、部署或其它外部变更前 |
+| [权限与变更安全](authority-and-change-safety.md) | 删除、清理、迁移、push、部署或其它外部变更前 |
 | [Shell 与命令可移植性](shell-and-command-portability.md) | 编写 Mac、Windows、远端或跨 shell 命令时 |
 | [新项目标准初始化](new-project-bootstrap.md) | 新仓库初始化 Trellis 或同步标准 profile 时 |
 
