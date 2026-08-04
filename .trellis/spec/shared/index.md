@@ -20,6 +20,7 @@
 |---|---|
 | [规则归属与优先级](rule-ownership-and-precedence.md) | 新增、迁移、合并或修改长期规则时 |
 | [双端 Git 协作](cross-device-git.md) | Mac/Windows 开工、交接、提交或同步时 |
+| [上游跟踪与分叉治理](upstream-fork-governance.md) | 仓库跟踪外部上游并长期保留本地或私有偏离时 |
 | [Trellis 项目状态](trellis-project-state.md) | 更新 Trellis、处理跟踪/忽略或 Registry 时 |
 | [长期知识沉淀](durable-knowledge.md) | 用户提出长期指令、设计原则或验收边界时 |
 | [证据与验证](evidence-and-verification.md) | 调查、测试、完成声明和最终交接时 |
@@ -36,5 +37,5 @@
 - Trellis 阶段、任务是否创建、JSONL 上下文清单和批准逻辑：由当前 `.trellis/workflow.md` 管理。
 - Codex、Claude、Cursor 等单个平台的模型、推理强度、hook 和权限：由对应项目级平台配置管理。
 - 分支、提交、push、部署、发布、tag 和 PR 的具体授权策略：由当前项目管理。
-- 论文数据、图件、Word、业务 API、数据库、UI、生产和上游分叉合同：留在拥有它们的项目规范中。
+- 论文数据、图件、Word、业务 API、数据库、UI、生产，以及具体上游地址、分支策略、差异清单和发布部署合同：留在拥有它们的项目规范中。
 - Trellis 自带的 code-reuse、cross-layer 等生成模板：继续跟随 Trellis 官方更新。
