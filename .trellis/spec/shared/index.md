@@ -34,10 +34,10 @@
 | [Shell 与命令可移植性](shell-and-command-portability.md) | 编写 Mac、Windows、远端或跨 shell 命令时 |
 | [新项目标准初始化](new-project-bootstrap.md) | 新仓库初始化 Trellis 或同步标准 profile 时 |
 
-## 不归本目录管理
+## 共享规则与项目边界
 
 - Trellis 阶段、任务是否创建、JSONL 上下文清单和批准逻辑：由当前 `.trellis/workflow.md` 管理。
 - Codex、Claude、Cursor 等单个平台的模型、推理强度、hook 和权限：由对应项目级平台配置管理。
-- 分支、提交、push、部署、发布、tag 和 PR 的具体授权策略：由当前项目管理。
+- 私有/公开仓库的默认 commit/push 授权边界由上表“权限与变更安全”管理；具体 remote、branch、main-only、PR-only、部署、发布和 tag 策略留在当前项目。
 - 论文数据、图件、Word、业务 API、数据库、UI、生产，以及具体上游地址、分支策略、差异清单和发布部署合同：留在拥有它们的项目规范中。
 - Trellis 自带的 code-reuse、cross-layer 等生成模板：继续跟随 Trellis 官方更新。

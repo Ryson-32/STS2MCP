@@ -8,10 +8,21 @@
 
 ## 开工前
 
-1. 运行 `git status --short --branch`，确认分支、ahead/behind 和工作区。
-2. 有 upstream 时先 `git fetch`；工作树干净且能快进时再使用 `git pull --ff-only`。
-3. 未提交、未跟踪、ahead/behind、diverged 或来源不明的改动都视为需要保护的现场。
-4. 不用 reset、clean、强制 checkout、覆盖复制或宽泛暂存来“整理”无法解释的现场。
+1. 运行 `git status --short --branch`，确认工作树、当前分支、tracking/upstream 和已有 ahead/behind 提示。
+2. 核对 remote 身份和目标分支后执行 `git fetch`，再按最新引用判断本地与 upstream 是收敛、ahead、behind 还是 diverged；fetch 成功不等于已拉取最新代码。
+3. 工作树干净、目标分支可快进且项目没有更严格限制时，必须先执行 `git pull --ff-only`，确认收敛后再开始实质编辑。
+4. 没有可验证的 upstream、工作树含有需保护改动、remote 身份不明或认证/同步失败时，不在可能陈旧的基线上继续编辑；保留现场并报告具体阻塞。
+5. 未提交、未跟踪、ahead/behind、diverged 或来源不明的改动都视为需要保护的现场；不用 reset、clean、强制 checkout、覆盖复制或宽泛暂存来“整理”无法解释的状态。
+
+## 普通分叉的谨慎收敛
+
+1. 发现 diverged 后，先核对 merge-base、两侧独有提交、patch-equivalent 关系、提交来源与 ownership，并读取项目对 merge、rebase、PR-only、main-only 等分支策略的明确要求。
+2. 工作树必须可安全操作；任何可能改写本地提交的动作开始前，建立指向当前提交的明确本地恢复引用并记录其名称。恢复引用不得作为待发布分支顺手 push。
+3. 当共同祖先、提交意图、目标分支和项目允许的策略都清楚时，执行项目允许的普通 merge 或 rebase 收敛；普通且可解释的分叉无需仅因“发生过分叉”再次停在计划层等待选择。
+4. 收敛后检查冲突残留和工作树，运行与改动风险相称的项目验证，再次 fetch 并确认远端未发生候选漂移；只有验证通过且关系符合项目策略时才继续提交或普通 push。
+5. 无共同祖先、疑似远端历史改写、提交或 ownership 无法解释、策略缺失、冲突不能可靠解决、验证失败或远端再次变化时停止。保留恢复入口，并报告证据、无法安全决定的原因和可选处理方向。
+
+不得使用 force push、reset、丢弃未知改动或覆盖复制来制造收敛。
 
 ## 多设备和多 AI
 
@@ -21,8 +32,9 @@
 
 ## 提交与远端
 
-- 只暂存当前逻辑单元的文件，完成与风险相称的检查后创建模块化提交。
-- 是否自动 push、允许哪些分支、是否部署或发布由项目规则决定；共享规则不替项目扩大授权。
+- 提交前精确查看状态、diff、staged diff、敏感信息和验证结果；只暂存当前逻辑单元的文件，不纳入无关或来源不明的改动。
+- commit/push 的授权边界遵循[权限与变更安全](authority-and-change-safety.md)；具体 remote、branch、main-only、PR-only 等合同仍由当前项目规则决定。
+- push 前重新核对仓库可见性、tracking remote/branch、权限和远端候选；只向已验证且获授权的目标执行普通 push。不得自动推向第三方 upstream、未知 remote 或非授权分支，目标漂移或认证失败时停止。
 - push 只同步 Git 历史，不等于部署、发布、tag、PR 或生产变更。
 - 不 force push，除非用户明确授权并已说明历史改写影响和恢复方案。
 - 全仓验收时分别报告“当前开发分支是否与 upstream 收敛”和“历史本地分支是否都已发布”；不要为追求表面 `0/0` 盲目推送旧备份或恢复分支。
