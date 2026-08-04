@@ -25,7 +25,7 @@
 | [上游跟踪与分叉治理](upstream-fork-governance.md) | 仓库跟踪外部上游并长期保留本地或私有偏离时 |
 | [Trellis 项目状态](trellis-project-state.md) | 更新 Trellis、处理跟踪/忽略或 Registry 时 |
 | [长期知识沉淀](durable-knowledge.md) | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 |
-| [证据与验证](evidence-and-verification.md) | 调查、检索或下载文献、获取或生成数据与产物、测试、完成声明和最终交接时 |
+| [证据与验证](evidence-and-verification.md) | 调查、检索、下载、入库或整理文献、获取或生成数据与产物、测试、完成声明和最终交接时 |
 | [跨平台验证](cross-platform-validation.md) | 路径、工具、数据或行为可能因系统不同而变化时 |
 | [敏感信息](sensitive-data.md) | 处理日志、配置、远端系统、账号或准备 push 时 |
 | [工程原则与最小改动](engineering-principles.md) | 设计实现、重构或评估是否需要新增抽象时 |

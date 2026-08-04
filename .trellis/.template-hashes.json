@@ -163,15 +163,15 @@
     ".trellis/spec/shared/cross-platform-validation.md": "cfb7e98094a6956f88631f84302e24a67f573823ab808cd033ed51ac693cc178",
     ".trellis/spec/shared/durable-knowledge.md": "1ca19323d2b8a999f400c5ef109db6c411a8de88c442c7c7f82a7209bf2176b6",
     ".trellis/spec/shared/engineering-principles.md": "9f7d86827429b145c0f881131b3aa6c4e7af8b798df2adf48b9f8116b574cac2",
-    ".trellis/spec/shared/evidence-and-verification.md": "6a96a9a52f61a391cd6d4465c2caa888bb8d9ab378821a5a2ffe769f358963b5",
-    ".trellis/spec/shared/index.md": "ad75346f1df748f40eb3acc829f221b7a52883fe6f73a9b81e41202fe3c3f036",
+    ".trellis/spec/shared/evidence-and-verification.md": "7b1de463278090e71cd0c6e161c4e22be30aed6db4208a6873578384ec554213",
+    ".trellis/spec/shared/index.md": "0edc31875e6a669a0e946631077031b9dc29715673e1b87bc8af5c3022c89280",
     ".trellis/spec/shared/new-project-bootstrap.md": "f39987cec2ac9f97c5749c39cd44a8e3ce72f83ef09c14e6676e0ee2c2c7bf6a",
     ".trellis/spec/shared/rule-ownership-and-precedence.md": "1633d1ab3ede5582a49d804a7315afd219650d6c828a65f3e44060d5e55ff75f",
     ".trellis/spec/shared/safe-workflow-and-efficiency.md": "bac6e2289999bff048344e8078ad761559ba94caa54409821d183a7033a8c1ee",
     ".trellis/spec/shared/sensitive-data.md": "7539a5c93d8b083a255be569ae9f075c465043e3cd0f97f0c8d2007f65959eb6",
     ".trellis/spec/shared/shell-and-command-portability.md": "8b631a8569bc40ad3732b75972d0e9aefa6ea9f7ed18b7bdb3c39b5bc2fa1e58",
     ".trellis/spec/shared/trellis-project-state.md": "b629cd899a861ace2004c9621dcbe08cbac3313459bf2f334468bfcc161668b4",
-    "AGENTS.md": "ab37711127aff78c9c5a1f918f2cf1acfd3f50bc0b8a836f1f5551adf44c07b3",
+    "AGENTS.md": "6253cbfe311ef7f5afc5f0f3d81b297e500f75430e85db73348157221048b81d",
     ".trellis/spec/shared/upstream-fork-governance.md": "0a07680b64962acfa1da7899cf58638b1e2a7be548dab7dbfd7a048e86527e76"
   }
 }
