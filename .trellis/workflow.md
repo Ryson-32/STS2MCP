@@ -110,7 +110,7 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
   degrades to a generic "Refer to workflow.md for current step." line —
   intentionally visible so users notice and fix a broken workflow.md.
 
-  INVARIANT (test/regression.test.ts):
+  INVARIANT (validated by the pinned-release profile fixture):
     Every workflow-walkthrough step marked `[required · once]` must have a
     matching enforcement line in its phase's [workflow-state:*] block. The
     breadcrumb is the only per-turn channel; if a mandatory step isn't
@@ -137,8 +137,10 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
       matching phase's `[required · once]` walkthrough steps for sync
     - Run `trellis update` after editing to push the new bodies to
       downstream user projects (block-level managed replacement)
-    - Full runtime contract:
-      .trellis/spec/cli/backend/workflow-state-contract.md
+    - Installed runtime contract and sources:
+      .trellis/workflow.md, .trellis/scripts/task.py,
+      .trellis/scripts/common/task_store.py, .trellis/scripts/common/active_task.py,
+      .codex/hooks/inject-workflow-state.py, .claude/hooks/inject-workflow-state.py
 -->
 
 ## Phase Index
@@ -690,9 +692,13 @@ Add a `hooks` field to your `task.json`:
 
 Supported events: `after_create / after_start / after_finish / after_archive`. Note that `after_finish` ≠ a status change (it only clears the active-task pointer); use `after_archive` for "task is done" notifications.
 
-### Full contract
+### Installed runtime contract
 
-For the workflow state machine's runtime contract, the locations of all status writers, pseudo-statuses (`no_task` / `stale_<source_type>`), the hook reachability matrix, and other deep details, see:
+This generated project does not depend on Trellis monorepo-only specification or test paths. Its installed workflow-state contract is owned by these runtime sources:
 
-- `.trellis/spec/cli/backend/workflow-state-contract.md` — runtime contract + writer table + test invariants
-- `.trellis/scripts/inject-workflow-state.py` — actual parser (reads workflow.md only, no embedded text)
+- `.trellis/workflow.md` — state blocks, phase invariants, and customization contract
+- `.trellis/scripts/task.py` — task lifecycle commands and status transitions
+- `.trellis/scripts/common/task_store.py` — task creation/archive persistence
+- `.trellis/scripts/common/active_task.py` — session pointers and pseudo-status resolution
+- `.codex/hooks/inject-workflow-state.py` — Codex parser for the workflow state blocks
+- `.claude/hooks/inject-workflow-state.py` — Claude parser for the workflow state blocks

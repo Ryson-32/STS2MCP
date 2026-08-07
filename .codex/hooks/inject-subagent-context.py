@@ -26,6 +26,7 @@ from __future__ import annotations
 import warnings
 warnings.filterwarnings("ignore")
 
+import hashlib
 import json
 import os
 import sys
@@ -446,6 +447,114 @@ def _materialize_jsonl_entries(
     return blocks
 
 
+
+def _routing_digest(repo_root: str, entries: list[dict]) -> str:
+    digest = hashlib.sha256()
+    for entry in entries:
+        relative_path = entry["path"].replace("\\", "/")
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(entry["reason"].strip().encode("utf-8"))
+        digest.update(b"\0")
+        with open(os.path.join(repo_root, relative_path), "rb") as handle:
+            canonical = handle.read().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            digest.update(canonical)
+        digest.update(b"\n")
+    return "sha256:" + digest.hexdigest()
+
+
+def _read_task_routing(repo_root: str, task_dir: str) -> tuple[list[dict] | None, str | None]:
+    relative_routing = f"{task_dir}/routing.json"
+    routing_path = os.path.join(repo_root, relative_routing)
+    if not os.path.isfile(routing_path):
+        return None, None
+    try:
+        with open(routing_path, "r", encoding="utf-8") as handle:
+            routing = json.load(handle)
+    except Exception as error:
+        return [], f"{relative_routing} is invalid JSON: {error}"
+    if not isinstance(routing, dict) or set(routing) != {
+        "schema_version", "state", "required_specs", "source_digest"
+    }:
+        return [], f"{relative_routing} has an invalid schema"
+    if routing.get("schema_version") != 1:
+        return [], f"{relative_routing} has an unsupported schema_version"
+    if routing.get("state") == "blocked":
+        return [], f"{relative_routing} state is blocked"
+    if routing.get("state") != "resolved":
+        return [], f"{relative_routing} state must be resolved or blocked"
+    entries = routing.get("required_specs")
+    if not isinstance(entries, list) or not entries:
+        return [], f"{relative_routing} resolved state requires required_specs"
+    seen: set[str] = set()
+    normalized: list[dict] = []
+    repo_path = Path(repo_root).resolve()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or set(entry) != {"path", "reason"}:
+            return [], f"{relative_routing} required_specs[{index}] is invalid"
+        path_value = entry.get("path")
+        reason = entry.get("reason")
+        if not isinstance(path_value, str) or not path_value.endswith(".md"):
+            return [], f"{relative_routing} required_specs[{index}].path is invalid"
+        normalized_path = path_value.replace("\\", "/")
+        if normalized_path.startswith("/") or any(
+            part in ("", ".", "..") for part in normalized_path.split("/")
+        ):
+            return [], f"{relative_routing} required_specs[{index}].path is unsafe"
+        if normalized_path in seen:
+            return [], f"{relative_routing} contains duplicate required_specs"
+        if not isinstance(reason, str) or not reason.strip() or any(
+            marker in reason for marker in ("\r", "\n")
+        ) or len(reason) > 240:
+            return [], f"{relative_routing} required_specs[{index}].reason is invalid"
+        full_path = (repo_path / normalized_path).resolve()
+        try:
+            full_path.relative_to(repo_path)
+        except ValueError:
+            return [], f"{relative_routing} required_specs[{index}].path escapes the repository"
+        if not full_path.is_file():
+            return [], f"{relative_routing} required spec is missing: {normalized_path}"
+        seen.add(normalized_path)
+        normalized.append({"path": normalized_path, "reason": reason.strip(), "type": "file"})
+    if not isinstance(routing.get("source_digest"), str) or _routing_digest(repo_root, normalized) != routing["source_digest"]:
+        return [], f"{relative_routing} source_digest mismatch"
+    return normalized, None
+
+
+def _materialize_task_routing(
+    repo_root: str,
+    task_dir: str,
+    limits: dict[str, int],
+    budget: _Budget,
+) -> list[str] | None:
+    _ = limits
+    entries, error = _read_task_routing(repo_root, task_dir)
+    if entries is None:
+        return None
+    if error:
+        return [f"[Trellis routing BLOCKED — {error}; read {task_dir}/routing.json and stop]"]
+    routing_path = f"{task_dir}/routing.json"
+    source_digest = "sha256:unknown"
+    try:
+        with open(os.path.join(repo_root, routing_path), "r", encoding="utf-8") as handle:
+            source_digest = json.load(handle)["source_digest"]
+    except Exception:
+        return [f"[Trellis routing BLOCKED — unable to reread {routing_path}]" ]
+    lines = [
+        f"[Trellis routing validated: {source_digest}]",
+        "Open every required spec below before substantive work; report the paths actually read.",
+    ]
+    lines.extend(f"- {entry['path']} — {entry['reason']}" for entry in entries)
+    block = "\n".join(lines)
+    block_bytes = len(block.encode("utf-8"))
+    if not budget.has_room(block_bytes):
+        return [
+            f"[Trellis routing BLOCKED — compact route exceeds context budget; read {routing_path} and stop]"
+        ]
+    budget.add(block_bytes)
+    return [block]
+
+
 def get_agent_context(
     repo_root: str,
     task_dir: str,
@@ -457,6 +566,11 @@ def get_agent_context(
     Get context from {agent_type}.jsonl for the specified agent.
     Only reads implement.jsonl or check.jsonl (the two JSONL files the task system creates).
     """
+    routing_blocks = _materialize_task_routing(
+        repo_root, task_dir, limits, budget
+    )
+    if routing_blocks is not None:
+        return "\n\n".join(routing_blocks)
     agent_jsonl = f"{task_dir}/{agent_type}.jsonl"
     blocks = _materialize_jsonl_entries(repo_root, agent_jsonl, limits, budget)
     return "\n\n".join(blocks)
@@ -721,8 +835,15 @@ def get_research_context(repo_root: str, task_dir: str | None) -> str:
     `task_dir` kept for signature parity with get_implement_context / get_check_context
     so the dispatcher can call them uniformly.
     """
-    _ = task_dir
     context_parts = []
+    if task_dir:
+        limits = _get_limits(repo_root)
+        budget = _Budget(limits["max_total_bytes"])
+        routing_blocks = _materialize_task_routing(
+            repo_root, task_dir, limits, budget
+        )
+        if routing_blocks is not None:
+            context_parts.extend(routing_blocks)
 
     # 1. Project structure overview (dynamically discover spec directories)
     spec_path = f"{DIR_WORKFLOW}/{DIR_SPEC}"

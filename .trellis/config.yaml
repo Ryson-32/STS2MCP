@@ -83,7 +83,9 @@ update:
     - ".agents/skills/trellis-start/SKILL.md"
     - ".agents/skills/trellis-brainstorm/SKILL.md"
     - ".codex/hooks/session-start.py"
+    - ".codex/hooks/inject-subagent-context.py"
     - ".codex/hooks.json"
+    - ".claude/hooks/inject-subagent-context.py"
 
 registry:
   spec:
