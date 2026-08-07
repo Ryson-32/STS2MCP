@@ -62,5 +62,5 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 读取 Python MCP Bridge Contract 项目合同 | [Python MCP Bridge Contract](.trellis/spec/mcp/index.md) | [索引](.trellis/spec/mcp/index.md) |
 | 读取 C# Mod And HTTP API Contract 项目合同 | [C# Mod And HTTP API Contract](.trellis/spec/mod/index.md) | [索引](.trellis/spec/mod/index.md) |
 
-任务存在 `routing.json` 时，主会话与 research/implement/check 角色必须验证并读取其中完全相同的 `required_specs` 集合；原生 `SubagentStart` 注入为首选，自行读取该文件为回退。任务阶段与调度另见 `.trellis/workflow.md`；项目业务合同与例外仍由本文件托管块外及声明的项目索引管理。冲突时按[共享索引](.trellis/spec/shared/index.md)的优先级处理。
+普通小任务无需 `routing.json`。文件存在时，主会话与 research/implement/check 必须验证同一共同 baseline；各角色只再读取自己的 supplement，并以 `common + 当前角色` 作为有效集合。原生 `SubagentStart` 注入为首选，自行读取该文件为回退；缺失文件不报错，存在但无效时失败关闭。任务阶段与调度另见 `.trellis/workflow.md`；项目业务合同与例外仍由本文件托管块外及声明的项目索引管理。冲突时按[共享索引](.trellis/spec/shared/index.md)的优先级处理。
 <!-- TRELLIS-PROFILE:END -->

@@ -463,60 +463,189 @@ def _routing_digest(repo_root: str, entries: list[dict]) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def _read_task_routing(repo_root: str, task_dir: str) -> tuple[list[dict] | None, str | None]:
-    relative_routing = f"{task_dir}/routing.json"
-    routing_path = os.path.join(repo_root, relative_routing)
-    if not os.path.isfile(routing_path):
-        return None, None
-    try:
-        with open(routing_path, "r", encoding="utf-8") as handle:
-            routing = json.load(handle)
-    except Exception as error:
-        return [], f"{relative_routing} is invalid JSON: {error}"
-    if not isinstance(routing, dict) or set(routing) != {
-        "schema_version", "state", "required_specs", "source_digest"
-    }:
-        return [], f"{relative_routing} has an invalid schema"
-    if routing.get("schema_version") != 1:
-        return [], f"{relative_routing} has an unsupported schema_version"
-    if routing.get("state") == "blocked":
-        return [], f"{relative_routing} state is blocked"
-    if routing.get("state") != "resolved":
-        return [], f"{relative_routing} state must be resolved or blocked"
-    entries = routing.get("required_specs")
-    if not isinstance(entries, list) or not entries:
-        return [], f"{relative_routing} resolved state requires required_specs"
+_ROUTING_ROLES = ("research", "implement", "check")
+_ROUTING_REASON_TRIM = (
+    "\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
+def _canonical_routing_reason(value: str) -> str:
+    return value.strip(_ROUTING_REASON_TRIM)
+
+
+def _routing_digest_v2(
+    repo_root: str,
+    common: list[dict],
+    supplements: dict[str, list[dict]],
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"trellis-routing-v2\0")
+    scopes = [("common", common)] + [
+        (role, supplements.get(role, [])) for role in _ROUTING_ROLES
+    ]
+    for scope, entries in scopes:
+        scope_bytes = scope.encode("utf-8")
+        digest.update(str(len(scope_bytes)).encode("ascii"))
+        digest.update(b":")
+        digest.update(scope_bytes)
+        count_bytes = str(len(entries)).encode("ascii")
+        digest.update(str(len(count_bytes)).encode("ascii"))
+        digest.update(b":")
+        digest.update(count_bytes)
+        for entry in entries:
+            relative_path = entry["path"].replace("\\", "/")
+            path_bytes = relative_path.encode("utf-8")
+            digest.update(str(len(path_bytes)).encode("ascii"))
+            digest.update(b":")
+            digest.update(path_bytes)
+            reason_bytes = _canonical_routing_reason(entry["reason"]).encode("utf-8")
+            digest.update(str(len(reason_bytes)).encode("ascii"))
+            digest.update(b":")
+            digest.update(reason_bytes)
+            with open(os.path.join(repo_root, relative_path), "rb") as handle:
+                canonical = handle.read().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                digest.update(str(len(canonical)).encode("ascii"))
+                digest.update(b":")
+                digest.update(canonical)
+    return "sha256:" + digest.hexdigest()
+
+
+def _validate_routing_entries(
+    repo_root: str,
+    relative_routing: str,
+    label: str,
+    entries: object,
+    common_paths: set[str] | None = None,
+) -> tuple[list[dict], str | None]:
+    if not isinstance(entries, list):
+        return [], f"{relative_routing} {label} must be an array"
     seen: set[str] = set()
     normalized: list[dict] = []
     repo_path = Path(repo_root).resolve()
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict) or set(entry) != {"path", "reason"}:
-            return [], f"{relative_routing} required_specs[{index}] is invalid"
+            return [], f"{relative_routing} {label}[{index}] is invalid"
         path_value = entry.get("path")
         reason = entry.get("reason")
-        if not isinstance(path_value, str) or not path_value.endswith(".md"):
-            return [], f"{relative_routing} required_specs[{index}].path is invalid"
+        if (
+            not isinstance(path_value, str)
+            or path_value != path_value.strip()
+            or not path_value.endswith(".md")
+            or any(marker in path_value for marker in ("\0", "\r", "\n"))
+        ):
+            return [], f"{relative_routing} {label}[{index}].path is invalid"
         normalized_path = path_value.replace("\\", "/")
-        if normalized_path.startswith("/") or any(
+        windows_absolute = (
+            len(normalized_path) >= 2
+            and normalized_path[0].isalpha()
+            and normalized_path[1] == ":"
+        )
+        if normalized_path.startswith("/") or windows_absolute or any(
             part in ("", ".", "..") for part in normalized_path.split("/")
         ):
-            return [], f"{relative_routing} required_specs[{index}].path is unsafe"
+            return [], f"{relative_routing} {label}[{index}].path is unsafe"
         if normalized_path in seen:
-            return [], f"{relative_routing} contains duplicate required_specs"
-        if not isinstance(reason, str) or not reason.strip() or any(
-            marker in reason for marker in ("\r", "\n")
+            return [], f"{relative_routing} {label} contains duplicate paths"
+        if common_paths is not None and normalized_path in common_paths:
+            return [], f"{relative_routing} {label} duplicates common_specs path: {normalized_path}"
+        if not isinstance(reason, str) or not _canonical_routing_reason(reason) or any(
+            marker in reason for marker in ("\0", "\r", "\n")
         ) or len(reason) > 240:
-            return [], f"{relative_routing} required_specs[{index}].reason is invalid"
+            return [], f"{relative_routing} {label}[{index}].reason is invalid"
         full_path = (repo_path / normalized_path).resolve()
         try:
             full_path.relative_to(repo_path)
         except ValueError:
-            return [], f"{relative_routing} required_specs[{index}].path escapes the repository"
+            return [], f"{relative_routing} {label}[{index}].path escapes the repository"
         if not full_path.is_file():
             return [], f"{relative_routing} required spec is missing: {normalized_path}"
+        try:
+            markdown_bytes = full_path.read_bytes()
+            if b"\0" in markdown_bytes:
+                return [], f"{relative_routing} {label}[{index}] Markdown contains NUL: {normalized_path}"
+            markdown_bytes.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return [], f"{relative_routing} {label}[{index}] Markdown is not UTF-8: {normalized_path}"
+        except OSError:
+            return [], f"{relative_routing} required spec is unreadable: {normalized_path}"
         seen.add(normalized_path)
-        normalized.append({"path": normalized_path, "reason": reason.strip(), "type": "file"})
-    if not isinstance(routing.get("source_digest"), str) or _routing_digest(repo_root, normalized) != routing["source_digest"]:
+        normalized.append({
+            "path": normalized_path,
+            "reason": _canonical_routing_reason(reason),
+            "type": "file",
+        })
+    return normalized, None
+
+
+def _read_task_routing(
+    repo_root: str,
+    task_dir: str,
+    agent_role: str,
+) -> tuple[list[dict] | None, str | None]:
+    relative_routing = f"{task_dir}/routing.json"
+    routing_path = os.path.join(repo_root, relative_routing)
+    if not os.path.isfile(routing_path):
+        return None, None
+    if agent_role not in _ROUTING_ROLES:
+        return [], f"{relative_routing} has an unsupported role: {agent_role}"
+    try:
+        with open(routing_path, "r", encoding="utf-8") as handle:
+            routing = json.load(handle)
+    except Exception as error:
+        return [], f"{relative_routing} is invalid JSON: {error}"
+    if not isinstance(routing, dict):
+        return [], f"{relative_routing} has an invalid schema"
+    version = routing.get("schema_version")
+    if version not in (1, 2):
+        return [], f"{relative_routing} has an unsupported schema_version"
+    if routing.get("state") == "blocked":
+        return [], f"{relative_routing} state is blocked"
+    if routing.get("state") != "resolved":
+        return [], f"{relative_routing} state must be resolved or blocked"
+    if version == 1:
+        if set(routing) != {"schema_version", "state", "required_specs", "source_digest"}:
+            return [], f"{relative_routing} has an invalid schema"
+        normalized, error = _validate_routing_entries(
+            repo_root, relative_routing, "required_specs", routing.get("required_specs")
+        )
+        if error:
+            return [], error
+        if not normalized:
+            return [], f"{relative_routing} resolved state requires required_specs"
+        expected = _routing_digest(repo_root, normalized)
+    else:
+        required = {"schema_version", "state", "common_specs", "source_digest"}
+        allowed = required | {"role_supplements"}
+        if not required.issubset(routing) or set(routing) - allowed:
+            return [], f"{relative_routing} has an invalid schema"
+        common, error = _validate_routing_entries(
+            repo_root, relative_routing, "common_specs", routing.get("common_specs")
+        )
+        if error:
+            return [], error
+        if not common:
+            return [], f"{relative_routing} resolved state requires common_specs"
+        supplements_value = routing.get("role_supplements", {})
+        if not isinstance(supplements_value, dict) or set(supplements_value) - set(_ROUTING_ROLES):
+            return [], f"{relative_routing} role_supplements has invalid roles"
+        common_paths = {entry["path"] for entry in common}
+        supplements: dict[str, list[dict]] = {}
+        for role in _ROUTING_ROLES:
+            normalized_role, error = _validate_routing_entries(
+                repo_root,
+                relative_routing,
+                f"role_supplements.{role}",
+                supplements_value.get(role, []),
+                common_paths,
+            )
+            if error:
+                return [], error
+            supplements[role] = normalized_role
+        expected = _routing_digest_v2(repo_root, common, supplements)
+        normalized = common + supplements[agent_role]
+    if not isinstance(routing.get("source_digest"), str) or expected != routing["source_digest"]:
         return [], f"{relative_routing} source_digest mismatch"
     return normalized, None
 
@@ -524,11 +653,12 @@ def _read_task_routing(repo_root: str, task_dir: str) -> tuple[list[dict] | None
 def _materialize_task_routing(
     repo_root: str,
     task_dir: str,
+    agent_role: str,
     limits: dict[str, int],
     budget: _Budget,
 ) -> list[str] | None:
     _ = limits
-    entries, error = _read_task_routing(repo_root, task_dir)
+    entries, error = _read_task_routing(repo_root, task_dir, agent_role)
     if entries is None:
         return None
     if error:
@@ -541,8 +671,8 @@ def _materialize_task_routing(
     except Exception:
         return [f"[Trellis routing BLOCKED — unable to reread {routing_path}]" ]
     lines = [
-        f"[Trellis routing validated: {source_digest}]",
-        "Open every required spec below before substantive work; report the paths actually read.",
+        f"[Trellis routing validated: {source_digest}; role: {agent_role}]",
+        "Open every effective spec below before substantive work; report the paths actually read.",
     ]
     lines.extend(f"- {entry['path']} — {entry['reason']}" for entry in entries)
     block = "\n".join(lines)
@@ -567,7 +697,7 @@ def get_agent_context(
     Only reads implement.jsonl or check.jsonl (the two JSONL files the task system creates).
     """
     routing_blocks = _materialize_task_routing(
-        repo_root, task_dir, limits, budget
+        repo_root, task_dir, agent_type, limits, budget
     )
     if routing_blocks is not None:
         return "\n\n".join(routing_blocks)
@@ -840,7 +970,7 @@ def get_research_context(repo_root: str, task_dir: str | None) -> str:
         limits = _get_limits(repo_root)
         budget = _Budget(limits["max_total_bytes"])
         routing_blocks = _materialize_task_routing(
-            repo_root, task_dir, limits, budget
+            repo_root, task_dir, "research", limits, budget
         )
         if routing_blocks is not None:
             context_parts.extend(routing_blocks)

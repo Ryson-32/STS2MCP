@@ -9,24 +9,49 @@
 
 ## 任务路由合同
 
-复杂、多代理或高风险任务可以在任务目录保存最小 `routing.json`：
+普通小任务、自包含任务和只需要任务文档即可完成的工作不创建
+`routing.json`。复杂、多代理、高风险，或确实需要把共同规范与角色补充精确交接的
+任务，才在任务目录保存最小 `routing.json`：
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "state": "resolved",
-  "required_specs": [
+  "common_specs": [
     { "path": ".trellis/spec/example/rule.md", "reason": "本任务需要的规则" }
   ],
+  "role_supplements": {
+    "check": [
+      { "path": ".trellis/spec/example/verification.md", "reason": "check 专用验收规则" }
+    ]
+  },
   "source_digest": "sha256:<digest>"
 }
 ```
 
-- 简单、自包含任务可以不创建该文件；一旦存在，它就是本任务规范集合的唯一机器可读事实源。
-- `required_specs` 只接受仓库相对 Markdown 文件、单行理由和无重复路径；`source_digest` 同时覆盖规范路径、理由和按 LF 规范化后的 Markdown 字节，避免同一 Git 内容仅因 Windows/Mac checkout 换行不同而误报漂移。
-- `resolved` 必须至少有一条规范；`blocked`、字段未知、路径越界、文件缺失、重复路径或 digest 漂移都阻止实现/check。不得静默回退到旧 JSONL 制造一个较小集合。
-- 主会话与 research/implement/check 读取完全相同的 `required_specs`。Hook 只注入经过摘要校验的 compact 路径/理由集合，agent 再打开正文；Hook 不可用时直接读取同一 `routing.json` 回退。最终报告列出实际读取路径以及路由是否验证通过。
-- 旧任务没有 `routing.json` 时仍可使用经校验的 `implement.jsonl` / `check.jsonl`，但不能同时维护两套互相冲突的规范事实源。
+- 文件缺失是正常状态，不报错、不阻止派发；角色继续读取任务文档，并按当前
+  workflow 使用已存在且经校验的 `implement.jsonl` / `check.jsonl` 或角色自己的
+  开工规范。文件一旦存在，就是本任务显式规范交接的唯一机器可读事实源。
+- `common_specs` 是所有角色一致读取的共同 baseline；`role_supplements` 只允许
+  `research`、`implement`、`check` 三个键。某角色的有效集合是
+  `common_specs + role_supplements[当前角色]`，保持声明顺序；重复项失败关闭。角色
+  之间不要求 supplement 相同，也不得把别的角色 supplement 注入当前角色。
+- 所有集合只接受仓库相对 Markdown 文件和单行理由。同一集合不得重复；共同
+  baseline 与任一角色 supplement 也不得重复同一路径。不同角色的 supplement
+  可以引用同一路径，因为它们不会同时进入一个角色的有效集合。
+- `source_digest` 使用长度分帧覆盖共同/角色作用域、规范路径、理由和按 LF
+  规范化后的所有 Markdown 原始字节，避免内容与下一条记录发生边界碰撞、角色归属
+  变化漏检，也避免 Windows/Mac checkout 换行差异制造假漂移。摘要覆盖所有角色，
+  不只覆盖当前派发角色；理由与 Markdown 不接受 NUL 字节。
+- schema v2 的 `resolved` 必须至少有一条共同规范。`blocked`、未知字段/角色、路径
+  越界、文件缺失、有效集合重复或 digest 漂移都阻止当前 worker；不得静默回退到
+  JSONL 制造一个较小集合。现有 schema v1 `required_specs` 文档在完整校验通过时
+  继续按“所有角色共同集合”读取，新任务和新示例使用 v2。
+- Hook 只注入经过摘要校验的 compact 路径/理由有效集合，agent 再打开正文；Hook
+  不可用时，角色直接读取同一 `routing.json` 并应用相同合并规则。最终报告列出
+  实际读取路径、当前角色以及路由是否验证通过。
+- 不得同时维护 routing 与一套相互冲突的 JSONL 规范事实源。routing 缺失时，旧
+  JSONL 兼容路径仍可用；routing 存在且有效时优先 routing，存在但无效时失败关闭。
 
 ## 能力事实与选择
 
@@ -34,6 +59,19 @@
 - 能力清单只暴露 provider 实际报告的模型和支持档位。每个 model/effort profile 分开记录 `requested`、`unknown`、`verified` 或 `unsupported`；CLI 接受参数最多证明 `cli-accepted/unknown`，第三方网关需由原始 provider 日志把状态提升为 `verified`。一个 provider 只有一个模型时只记录该模型，不把熟悉的模型名伪装成 alias。
 - 先应用项目启停、领域禁用、安全主目标和设备可用性，再在剩余候选中选择最低足够能力。安全主目标只能选择能力记录明确标记可承担该目标的模型。
 - 重试次数必须有界。重选模型、降低 effort、切换 provider 或从并行降为串行时，保留原请求、实际结果和原因；不能把降级后的身份写成最初请求已经满足。
+
+## 跨项目模型偏好
+
+- 这是一份经过能力门禁后的候选偏好，不是固定 provider 矩阵。实际 capability
+  export、项目禁用、安全主目标和设备可用性始终优先。
+- 日常研究、实现和检查优先考虑 Sol `medium` / `high`；困难科学推理、跨层问题、
+  安全或高影响判断优先考虑能力已验证的 Sol `xhigh` / `max`。
+- 能力已验证且当前配额充足的 Opus 应在候选池中获得实质而非象征性的权重：
+  适合边界清晰的实现、前端与文字工作，也适合作为独立 research/check。独立检查
+  优先选择与实现不同的模型家族；反向组合也成立，不能把 Opus 固定成偶发兜底。
+- Fable 只有在目标 model/effort profile 已验证且项目允许时才进入候选；它不得
+  承担安全主目标。任何家族发生降级、重映射或不可观测时，仍按 requested/observed
+  合同记录，而不是用偏好表替代事实。
 
 ## 独立 Claude worker 进程合同
 

@@ -153,11 +153,11 @@
     ".claude/agents/trellis-check.md": "9e48342243f311d55386f8fb42933945e87aba73d5ade547133aa98345a06128",
     ".claude/agents/trellis-implement.md": "73b56b3047c0e852382c4630aa181fb847d1e5ea1f63459dac4bf728f43fd097",
     ".claude/agents/trellis-research.md": "10aecdd3d0777746a516e23cd2a55c9e9c8a015dc98c63ffbac36be21b7a7bb0",
-    ".claude/hooks/inject-subagent-context.py": "82ed9a70012d50c3ea34d80ccce57906fb03600192ed6685f82fe94d9202a635",
+    ".claude/hooks/inject-subagent-context.py": "8bac33179e97f2eb8485d6897a74bc398f1122b6d1471997712bda588c71442c",
     ".claude/hooks/inject-workflow-state.py": "89cef2b197dd61a731b946114207d2601b240058941ccf28622ee211d9c62eb3",
     ".claude/hooks/session-start.py": "e8b70d2893fbdc870caefebfc89bab3497c54f39ecf77a6ecd92734c42ede408",
     ".claude/settings.json": "01226db3027908dac1260955e205877ee46c1d410912172d8bae9c53527b3b0f",
-    ".codex/hooks/inject-subagent-context.py": "82ed9a70012d50c3ea34d80ccce57906fb03600192ed6685f82fe94d9202a635",
+    ".codex/hooks/inject-subagent-context.py": "8bac33179e97f2eb8485d6897a74bc398f1122b6d1471997712bda588c71442c",
     ".trellis/spec/shared/authority-and-change-safety.md": "fb6d5f4cd874beaf65b4a58eb88cdb4189815d81cdb305edf66633162b967497",
     ".trellis/spec/shared/cross-device-git.md": "829fc7af873fd1e25f2030f93497d780a87f89a5b63b77075f508d890083bbd7",
     ".trellis/spec/shared/cross-platform-validation.md": "cfb7e98094a6956f88631f84302e24a67f573823ab808cd033ed51ac693cc178",
@@ -171,8 +171,8 @@
     ".trellis/spec/shared/sensitive-data.md": "7539a5c93d8b083a255be569ae9f075c465043e3cd0f97f0c8d2007f65959eb6",
     ".trellis/spec/shared/shell-and-command-portability.md": "8b631a8569bc40ad3732b75972d0e9aefa6ea9f7ed18b7bdb3c39b5bc2fa1e58",
     ".trellis/spec/shared/trellis-project-state.md": "b629cd899a861ace2004c9621dcbe08cbac3313459bf2f334468bfcc161668b4",
-    "AGENTS.md": "56954bdc18ae0565a162b59942170e64a4d18cdb5d8a22b38e3bca463c7936d0",
+    "AGENTS.md": "05dca6900f1f941596b5ad3c13cf8c5b7e2443e4da35bbde233c6902c46d11c9",
     ".trellis/spec/shared/upstream-fork-governance.md": "9cfb58389d81463463e446dcd20ed1946b40e93c5114f669234396d22ab889a8",
-    ".trellis/spec/shared/subagent-orchestration.md": "f1eb47bc2fa26f8d111bcf82b987e9f4c98921d05dd7e6503c9a7023a838e1c6"
+    ".trellis/spec/shared/subagent-orchestration.md": "b4427f5df8da7f0f60d1399460461142e6ef2d5d59c7d1853f643b5e3d1700d1"
   }
 }
