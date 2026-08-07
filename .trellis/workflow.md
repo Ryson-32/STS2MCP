@@ -613,31 +613,19 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 4. **Draft a commit plan**. Group AI-edited files into logical commits (1 commit per coherent change unit, not 1 commit per file). Each entry: `<commit message>` + file list. List unrecognized files separately at the bottom.
 
-5. **Present the plan once, ask for one-shot confirmation**. Format:
-   ```
-   Proposed commits (in order):
-     1. <message>
-        - <file>
-        - <file>
-     2. <message>
-        - <file>
+5. **Review authorization and ownership once**. Keep unrecognized dirty files outside the commit plan unless their ownership and inclusion are explicitly resolved.
 
-   Unrecognized dirty files (NOT in any commit — confirm include/exclude):
-     - <file>
-     - <file>
+If current user authorization and project rules already cover the task's commit and ordinary push, proceed without a formal second confirmation. Ask only when file ownership, final scope, repository visibility/upstream, or external effects remain unresolved.
 
-   Reply 'ok' / '行' to execute. Reply with edits, or '我自己来' / 'manual' to abort.
-   ```
+6. **Commit within authority**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. After committing, use an ordinary push only when current authorization and project rules allow it, after rechecking the exact upstream, branch, visibility, and candidate SHA.
 
-6. **On confirmation**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
-
-7. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
+7. **Stop on unresolved authority**: if commit or push authorization, file ownership, or the exact remote target remains unclear, stop and hand off the reviewed plan instead of guessing or broadening scope.
 
 **Rules**:
 - No `git commit --amend` anywhere — three-stage three-commit flow (work commits → archive commit → journal commit).
-- Never push to remote in this step.
-- If the user wants different message wording but accepts the file grouping, edit the message and re-confirm once — but if they reject the grouping, exit to manual mode.
-- The batched plan is one prompt; do not prompt per commit.
+- Never force-push, guess a remote, include unrecognized work, or exceed the current repository's commit/push contract.
+- Ordinary commit and push authority follows current user instructions, project rules, repository visibility, and the shared authority-and-change-safety contract.
+- When existing authorization covers the exact action, do not add a ceremonial confirmation prompt per commit or per push.
 
 #### 3.5 Wrap-up reminder
 
@@ -652,7 +640,7 @@ This section is for developers who want to modify the Trellis workflow itself. A
 ### Changing what a step means
 
 Edit the corresponding step's walkthrough body in the Phase 1 / 2 / 3 sections above. Critical invariants:
-- No active task must triage first and ask for task-creation consent before creating a Trellis task.
+- No active task must triage first; create Trellis persistence when useful without a separate process-approval gate.
 - Planning must distinguish lightweight PRD-only tasks from complex tasks that require `prd.md`, `design.md`, and `implement.md` before start.
 - Every required execution path must keep the Phase 3.4 commit reminder reachable before `/trellis:finish-work`.
 
