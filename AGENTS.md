@@ -48,8 +48,8 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 调查、检索、下载、入库或整理文献、获取或生成数据与产物、测试、完成声明和最终交接时 | [证据与验证](.trellis/spec/shared/evidence-and-verification.md) |
 | 路径、工具、数据或行为可能因系统不同而变化时 | [跨平台验证](.trellis/spec/shared/cross-platform-validation.md) |
 | 处理日志、配置、远端系统、账号或准备 push 时 | [敏感信息](.trellis/spec/shared/sensitive-data.md) |
-| 设计实现、重构或评估是否需要新增抽象时 | [工程原则与最小改动](.trellis/spec/shared/engineering-principles.md) |
-| 从调查到交付组织步骤、并行和 ownership 时 | [安全高效工作流](.trellis/spec/shared/safe-workflow-and-efficiency.md) |
+| 任务会修改、创建、删除或生成任何文件时 | [工程原则与最小改动](.trellis/spec/shared/engineering-principles.md) |
+| 任何任务开始、规划、调查、执行、验证或交付时 | [安全高效工作流](.trellis/spec/shared/safe-workflow-and-efficiency.md) |
 | 删除、清理、迁移、push、部署或其它外部变更前 | [权限与变更安全](.trellis/spec/shared/authority-and-change-safety.md) |
 | 编写 Mac、Windows、远端或跨 shell 命令时 | [Shell 与命令可移植性](.trellis/spec/shared/shell-and-command-portability.md) |
 | 新仓库初始化 Trellis 或同步标准 profile 时 | [新项目标准初始化](.trellis/spec/shared/new-project-bootstrap.md) |
