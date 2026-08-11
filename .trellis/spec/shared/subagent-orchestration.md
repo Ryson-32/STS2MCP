@@ -86,9 +86,16 @@
 
 - `gpt-5.6-sol-xhigh` 是无法可靠归入其它类别时的默认通用档；不能为了节省调用而把
   有歧义或跨系统任务静默降到 `medium` / `high`。
-- 同一主任务内，GPT 系列子代理同时最多并行 10 个，Claude 系列子代理同时最多并行
-  20 个。实际平台可用额度更低时采用较低值；并发上限不是目标数量，只在任务彼此独立
-  且并行确有收益时使用。
+- 同一台机器上同时存活的 Trellis Channel worker 全局最多 20 个，不再设置单任务
+  或模型家族并发上限。每次启动前必须跨所有项目和 scope 统计 live worker；只有当前
+  总数低于 20 时才可启动，且启动后总数不得超过 20。实际平台可用额度更低时采用较低
+  值；并发上限不是目标数量，只在任务彼此独立且并行确有收益时使用。Trellis CLI
+  调度器以 `trellis channel list --all --all-projects --json` 的 `workersAlive` 总和作为
+  启动前事实源。若事件流出现 lock acquisition / `EPERM` 错误、汇总与仍存活的
+  supervisor PID 文件明显不一致，或无法确认汇总新鲜度，必须跨 `~/.trellis/channels`
+  将 PID 文件与实际进程只读对账，并以 CLI 汇总和实际存活 supervisor 数的较大值限流；
+  事实仍不可信时不得启动。若平台仍有按项目或任务计算的旧 guard，应在本次 spawn
+  显式禁用该局部限制，由全局计数统一限流，不能让局部 guard 重新形成单任务上限。
 - `research` 直接按表中的任务形态选择：普通探索和跨文件分析属于 Sol high，归类
   困难、有歧义或跨系统时使用默认 Sol xhigh；复杂探索或高价值验证可选择 Fable xhigh。
 - `implement` 对约束完整的编码任务优先选择 `claude-opus-5-xhigh`，前端实现、重构
