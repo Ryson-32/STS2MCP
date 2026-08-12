@@ -9,7 +9,7 @@
 - `.trellis/scripts/**`、项目生成的 agent/skill/hook 入口
 - `.trellis/tasks/**`、`.trellis/workspace/**` 中有协作价值的任务、归档和交接记录
 
-不要手工修改 `.trellis/.version` 或 `.trellis/.template-hashes.json` 来消除更新提示。
+`.trellis/.version` 和 `.trellis/.template-hashes.json` 是工具维护的派生状态；不得手工修改它们或其它生成块来消除更新提示。
 
 ## 应忽略的本机状态
 
@@ -21,6 +21,13 @@
 - 用户级 trust、provider、MCP、登录、通知、审批和密钥状态
 
 项目如果有额外本机状态，应在项目 `.gitignore` 中精确列出，不用宽泛规则忽略整个 `.trellis/`。
+
+## 受管入口与生成投影
+
+- 一个入口文件可以同时包含官方模板块、Profile 生成块和项目正文。修改前先依据托管标记确认各部分的所有者，不把整份文件视为全手工或全生成。
+- 标准 Profile 中，`TRELLIS:START` 块来自官方模板，`TRELLIS-PROFILE` 块来自共享索引和声明的项目索引；托管块外的项目正文由项目维护并应保留。
+- 修改 `TRELLIS-PROFILE` 展示的规则时，先更新拥有规则的 spec；路由变化时再更新对应索引，然后通过 Profile 重新生成投影。不得把手工修改生成块或哈希当作修复。
+- 至少审查一次 dry run 和生成 diff，运行相关链接检查，再在落盘后通过第二次 dry run 确认零文件变化。
 
 ## 更新原则
 
