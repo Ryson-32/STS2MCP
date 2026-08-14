@@ -34,6 +34,10 @@ trellis channel messages <channel> --raw --last 50
 
 Rule of thumb: never diagnose a worker from a truncated progress line.
 
+`channel list --json` currently separates `durable`, `activity`, and `runtime`
+dimensions. Use those objects or the normal CLI summary; do not hand-parse old
+fields such as `lastTimestamp`.
+
 ### Rebuild Streaming Text
 
 To reconstruct what a model actually streamed during a turn, concatenate
@@ -68,9 +72,10 @@ Triage order:
    ps -p "$(cat "$CHAN/<worker>.worker-pid")"
    ```
 
-   If the supervisor PID is gone but the channel still lists the worker,
-   you have a ghost entry — clean it with
-   `trellis channel kill <name> --as <worker> --force`.
+   If the supervisor PID is missing or confirmed dead but durable lifecycle
+   is still running, preview `trellis channel reclaim <name> --as <worker>
+   --dry-run`, then run it without `--dry-run`. Reclaim never signals a live
+   process; use `kill` for a supervisor that is actually alive.
 
 3. **Tail the worker log.** This is the canonical place to see provider /
    MCP / tool startup output that never makes it onto the channel.
@@ -133,7 +138,7 @@ Useful filters:
 ```bash
 trellis channel wait T --as main --from check --kind done --timeout 15m
 trellis channel wait T --as main --from check,check-cx --kind done --all --timeout 15m
-trellis channel wait T --as worker --tag interrupt --timeout 1h
+trellis channel wait T --as worker --kind interrupt_requested,interrupted --timeout 1h
 trellis channel wait T --as main --thread release-note --action status --timeout 10m
 ```
 
@@ -149,7 +154,7 @@ Don't make it a habit, and **never** do it for forum channels.
 Why subcommands first:
 
 - `messages` already replays the file with filters (`--kind`, `--from`,
-  `--last`, `--tag`, `--thread`, `--action`) and gives you `--raw` for the
+  `--last`, `--kind`, `--thread`, `--action`) and gives you `--raw` for the
   exact JSON. Anything you would write a one-liner for, `messages` already
   does.
 - `wait` consumes the same file with EOF semantics — re-implementing that
@@ -200,8 +205,25 @@ diffing against `<worker>.inbox-cursor` while debugging the supervisor.
 | progress line is cut off | pretty output truncation | use `messages --raw --kind progress` |
 | worker never speaks | provider startup / prompt / MCP delay | inspect `<worker>.log`, `ps`, raw events |
 | channel not found in another cwd | project bucket mismatch | `cd` to project, use `--scope global`, or `list --all-projects` |
-| ghost worker in list | supervisor died without cleanup | `trellis channel kill <name> --as <worker> --force` |
+| durable running but PID missing/dead | supervisor exited without durable terminal cleanup | `channel reclaim <name> --as <worker> --dry-run`, then explicit reclaim |
+| durable running plus stable legacy reservation/mismatched residue | an older launch left ephemeral evidence beside the durable generation | the same exact reclaim dry-runs as `would-reconcile` and closes both in one real call |
+| dead/missing PID sidecars without an exact spawned identity | failed launch left orphan runtime files | dry-run exact `reclaim --as`; cleanup removes only ephemeral sidecars and appends no worker event |
 | forum thread looks scrambled | parsed `events.jsonl` directly | use `forum`, `thread`, `messages --thread` |
+
+## Source Link vs Published Package Tests
+
+A globally available `trellis` command may resolve to a packed npm archive or
+to a developer checkout linked by a Windows Junction/POSIX symlink. Confirm the
+actual target with the package manager before describing the environment.
+
+The published archive intentionally ships runtime `dist`, `bin`, README, and
+LICENSE content; it does not include source tests or dev dependencies. Therefore
+"run the tests bundled in the installed package" is not a valid packed-package
+check. For a global source link, run the checkout's package test script through
+that link: its source-owned runner follows the physical checkout before
+resolving Vitest. Report that result as a **source-linked checkout test**, then
+verify the built CLI separately. Never describe a source-link shim failure as a
+Channel runtime test failure unless the test runner actually reached the tests.
 
 ## Storage Layout
 

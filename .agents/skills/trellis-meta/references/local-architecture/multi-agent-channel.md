@@ -46,7 +46,7 @@ Prefer cheaper primitives when:
 
 | Need | Edit location |
 | --- | --- |
-| Change default channel worker idle timeout | `channel.worker_guard.idle_timeout` in `.trellis/config.yaml`. Accepts `5m`, `30s`, etc. Set `0` to disable idle cleanup. |
+| Change default channel worker idle warning interval | `channel.worker_guard.idle_timeout` in `.trellis/config.yaml`. Accepts `5m`, `30s`, etc. Set `0` to disable warnings; expiry never kills a worker. |
 | Change live worker budget | `channel.worker_guard.max_live_workers` in `.trellis/config.yaml`. Set `0` to disable the spawn-time budget check. |
 | Override worker guard per spawn | Pass `--idle-timeout` / `--max-live-workers` on `trellis channel spawn`, or set `TRELLIS_CHANNEL_WORKER_IDLE_TIMEOUT` / `TRELLIS_CHANNEL_MAX_LIVE_WORKERS` in the environment. |
 | Change what the default Check or Implement worker does | Edit `.trellis/agents/check.md` or `.trellis/agents/implement.md`. These are platform-agnostic role cards; the channel runtime injects them when `--agent check|implement` is passed. |
@@ -54,7 +54,7 @@ Prefer cheaper primitives when:
 | Relocate channel storage (CI sandbox, ephemeral runs) | Set `TRELLIS_CHANNEL_ROOT=/path/to/dir`. Channel events move with it; existing channels stay at the old root. |
 | Switch storage scope | Pass `--scope project` (default) or `--scope global` on every channel subcommand. The bucket directory changes; nothing else does. |
 
-Precedence for the worker guard is: CLI flag > environment variable > `.trellis/config.yaml` > built-in default. Built-in defaults are `idle_timeout: 5m` and `max_live_workers: 6`.
+Precedence for the worker guard is: CLI flag > environment variable > `.trellis/config.yaml` > built-in default. Built-in defaults are `idle_timeout: 5m` (warning-only) and `max_live_workers: 25`.
 
 ## Relationship To Other Local Layers
 

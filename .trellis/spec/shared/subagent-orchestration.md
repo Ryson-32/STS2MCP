@@ -4,7 +4,7 @@
 
 - `research`、`implement`、`check` 是稳定职责，不等于固定模型、provider 或进程类型。主会话先判断任务形态和职责，再从本文件的规范性偏好表取得通常的第一候选；不得因此在三个角色定义中静态锁死同一个模型或 effort。
 - Trellis 平台子代理优先通过原生 `SubagentStart` 获得任务上下文；Hook 不可用时，角色必须自行读取活动任务和同一份路由，不得从记忆猜测规范集合。
-- Codex/Trellis 启动的独立 Claude Code CLI/SDK worker 是外部进程，不是 Claude 主会话内部 subagent。不得依赖 Agent Teams、环境中的隐式子代理模型变量或界面工作流提示来推断其模型、effort、并发或上下文。
+- Trellis Channel 启动的 Claude Code CLI/SDK worker 是外部进程，不是 Claude 主会话内部 subagent。不得依赖 Agent Teams、环境中的隐式子代理模型变量或界面工作流提示来推断其模型、effort、并发或上下文。
 - 浏览器、桌面应用或其它项目私有自动化不是 Trellis 子代理。它们的槽位、附件、业务门禁和状态账本留在拥有它们的项目规则中。
 
 ## 任务路由合同
@@ -77,16 +77,14 @@ interrupt(worker_id, reason, supervision_evidence, handoff)
 resume(thread_or_session_id, checkpoint, ownership)
 ```
 
-- 若为 worker 执行配置自动时间阈值，`timeout_ms` 必须至少为 `7200000`（2 小时）。
-  长任务应优先省略或禁用自动执行上限；平台的 timeout 若到点必然 kill，就不得把它用于
-  长任务，也不能把“已设为 2 小时”当作自动终止许可。
-- 运行阈值只能触发监督检查或告警，不能仅因时间届满自动 interrupt/kill。项目可以采用
-  更长阈值，但不得用更短值覆盖本底线。
-- 外部平台若只提供到点自动 kill 的 timeout，长任务必须省略或禁用该 timeout；做不到时
-  必须明确标记为不符合本合同，不能宣称已经支持本节的监督语义。
-- CLI 文本 `disabled` 的唯一内部和 durable ledger 表示为 JSON `null`；省略值由运行时在
-  单一边界解析为默认 `7200000`。schema、CLI 回读、内部 API、reservation/config 和
-  `spawned`/run ledger 必须保持相同表示，不得把 `null` 静默改回 2 小时。
+- 不设置跨项目的最低运行时长，也不把运行时长当作完成门。worker 完成约定范围和必要
+  验证后应立即交付；不得为了凑满某个时长继续重复扫描、监控或制造工作。
+- 自动时间阈值必须区分“只告警”和“硬终止”。默认省略硬终止阈值；只告警阈值到点只
+  触发一次状态检查，不自动 interrupt/kill。任务确实需要硬截止时，由用户、项目合同或
+  调用方按任务风险明确设置，不能把该值提升为所有 worker 的通用最低值或默认时长。
+- CLI 文本 `disabled` 的内部和 durable ledger 表示为 JSON `null`；schema、CLI 回读、
+  内部 API、reservation/config 和 `spawned`/run ledger 必须保持相同表示，不得把 `null`
+  静默改成固定时长。
 
 ### 3. 运行合同
 
@@ -95,9 +93,9 @@ resume(thread_or_session_id, checkpoint, ownership)
   存活以及 CPU、I/O 或日志是否仍增长；是否在等待工具、锁、浏览器、网络或其它外部
   资源；最近 checkpoint 和可能已经发生的副作用；消息是否可达。某一平台无法观测的项
   必须标为 `unknown`，不能猜成“无活动”。
-- 只有证据确认卡死、明显偏航、继续运行有危险、需要新的授权/用户已撤销授权，或出现
-  必须立即释放资源的紧急情况，才允许中断。中断前保存可用 checkpoint，明确 ownership
-  退出或 handoff，并在事后回读目标状态证明已经停止。
+- 用户取消、任务已经由其它路径完成、明确卡死或失败、明显偏航、继续运行有危险、需要
+  新授权，或必须释放资源时可以中断。可行时先核对当前状态并保留已有产物；是否需要
+  checkpoint 或 handoff 取决于实际恢复价值，不把结构化审计记录设成中断前置门槛。
 - 启动调用返回 supervisor PID 或接受请求只证明启动已被受理。派发首条任务前必须等待
   目标 worker 的持久化 `spawned` 或等价运行态回读；启动握手出现错误、进程退出或其自身
   有界 timeout 时，只清理该精确未就绪实例，不能把未就绪实例当作成功启动。
@@ -115,26 +113,27 @@ resume(thread_or_session_id, checkpoint, ownership)
 
 | 现场 | 必须动作 |
 |---|---|
-| 执行阈值小于 2 小时 | 拒绝启动；只有调用方明确选择时才改为 disabled，不得静默改写 |
+| 没有项目明确要求的最低运行时长 | 完成范围和验证后立即交付，不为凑时长继续运行 |
 | timeout 到点会自动 kill 健康 worker | 长任务禁用该 timeout；改用告警/监督检查 |
 | 仅运行很久、输出安静或推理慢 | 继续等待或只读监督，不得 interrupt |
 | durable progress、进程活动或外部等待仍有任一健康证据 | 保持运行；必要时发送一次含新增信息的消息 |
-| 监督项不完整或互相矛盾 | 标为 `unknown` 并失败关闭中断决定 |
-| 已确认卡死、偏航、危险、新授权门或资源紧急 | 保存 checkpoint/副作用记录和 handoff 后才可中断 |
-| 中断调用 timeout、无回执或状态不明 | 不得声称已停止；回读目标状态并冻结原 ownership |
+| 监督项不完整或互相矛盾 | 标为 `unknown`；不得仅凭时间或安静断言卡死 |
+| 用户取消、任务已完成、卡死、失败、偏航、危险、新授权门或资源紧急 | 按实际恢复价值保留产物后中断 |
+| 中断调用 timeout、无回执或状态不明 | 不得声称已停止；先回读目标状态 |
 | 错误中断后原 session 可验证恢复 | resume 原 thread/session，不从头重复 |
 
 ### 5. Good / Base / Bad
 
-- Good：4 小时研究 worker 仍有日志增长且正在等待浏览器结果；监督记录为健康并继续等待。
-- Base：平台必须填写执行阈值时使用不少于 2 小时的告警阈值，到点只触发健康检查。
+- Good：worker 已完成约定复核和验证，运行 24 分钟后直接交付；另一个长研究 worker 仍有
+  日志增长且正在等待浏览器结果，因此继续等待。
+- Base：平台必须填写时间阈值时使用与任务相称的只告警阈值，到点只触发状态检查。
 - Bad：因为 55 分钟无输出、额度将刷新或模型推理慢，直接 timeout kill 后另开 worker 重做。
+- Bad：复核已经完成，却为了满足人为规定的 2 小时最低时长继续重复 snapshot。
 
 ### 6. 必需验收
 
-- 本仓库拥有的 adapter/control plane 的配置与 CLI 测试必须拒绝
-  `0 < timeout_ms < 7200000` 的 worker 执行阈值，并覆盖 CLI `disabled` →
-  internal/ledger `null`、省略 → `7200000` 与恰好 2 小时的边界。
+- 本仓库拥有的 adapter/control plane 的配置与 CLI 测试必须覆盖 CLI `disabled` →
+  internal/ledger `null`，并证明省略值不会被静默改成固定最低时长。
 - 本仓库拥有的监督实现测试必须证明阈值触发不会自动终止仍存活的 worker；显式人工取消
   仍可执行，但调用方必须先满足监督证据与 handoff 合同。
 - 恢复测试必须证明可寻址的原 thread/session 被优先复用，且新旧 worker 不会同时持有同一
@@ -144,8 +143,8 @@ resume(thread_or_session_id, checkpoint, ownership)
 
 Wrong：`timeout_ms=3300000`，到点无条件 `kill`，再以新 session 重跑。
 
-Correct：长任务禁用 hard timeout，或使用 `timeout_ms>=7200000` 的监督告警；到点完成健康
-检查，只有具备允许中断的证据时才人工停止，并优先从原 session/checkpoint 恢复。
+Correct：长任务禁用 hard timeout，或使用与任务相称的监督告警；完成范围和验证后立即
+交付。需要中断时先核对状态并按实际价值保留产物，可恢复时优先复用原 session/checkpoint。
 
 ## 能力事实与选择
 
@@ -176,9 +175,9 @@ Correct：长任务禁用 hard timeout，或使用 `timeout_ms>=7200000` 的监�
   未应用或不可观测；不得声称该 effort 已满足，也不得用复合伪 ID 探测 provider。
 - `gpt-5.6-sol` + `xhigh` 是无法可靠归入其它类别时的默认通用档；不能为了节省调用而把
   有歧义或跨系统任务静默降到 `medium` / `high`。
-- 同一台机器上同时存活的 Trellis Channel worker 全局最多 20 个，不再设置单任务
+- 同一台机器上同时存活的 Trellis Channel worker 全局最多 25 个，不再设置单任务
   或模型家族并发上限。每次启动前必须跨所有项目和 scope 统计 live worker；只有当前
-  总数低于 20 时才可启动，且启动后总数不得超过 20。实际平台可用额度更低时采用较低
+  总数低于 25 时才可启动，且启动后总数不得超过 25。实际平台可用额度更低时采用较低
   值；并发上限不是目标数量，只在任务彼此独立且并行确有收益时使用。Trellis CLI
   调度器以 `trellis channel list --all --all-projects --json` 的 `workersAlive` 总和作为
   启动前事实源。若事件流出现 lock acquisition / `EPERM` 错误、汇总与仍存活的
@@ -201,7 +200,7 @@ Correct：长任务禁用 hard timeout，或使用 `timeout_ms>=7200000` 的监�
   降级、重映射或不可观测时，仍按 requested/observed 合同如实记录；该身份记录与
   上述轻量选模偏好各自独立。
 
-## 独立 Claude worker 进程合同
+## Trellis Channel 外部 worker 进程合同
 
 - 默认使用一次性 print mode：参数数组包含 `-p --output-format json --no-session-persistence`，prompt 通过 stdin 或受保护文件传入，不拼接 shell 命令。需要连续上下文时，必须显式选择 persistent mode 和 session identity。
 - adapter 必须实现进程启动、JSON 解析、只告警的监督 timeout、显式 cancel、退出码/stderr
@@ -214,7 +213,7 @@ Correct：长任务禁用 hard timeout，或使用 `timeout_ms>=7200000` 的监�
 
 ## Requested 与 observed 身份
 
-每次独立 worker 运行至少记录：
+每次需要身份账本的外部 worker 运行至少记录：
 
 | 字段 | 合同 |
 |---|---|

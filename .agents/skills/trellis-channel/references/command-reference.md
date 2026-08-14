@@ -60,9 +60,14 @@ trellis channel list
 
 Behavior:
 - Default scope: current cwd's project. `--all-projects` scans every bucket.
-- Pretty mode prints `NAME WORKERS EVENTS LAST KIND TYPE TASK`, sorted by
-  recency, with a footer noting hidden ephemeral count.
-- `--json` switches to a JSON array.
+- Pretty mode prints `NAME RUNTIME DURABLE ACTIVITY EVENTS LAST KIND TYPE TASK`,
+  sorted by recency. `RUNTIME` is local supervisor capacity; `DURABLE` is
+  event-log lifecycle; `ACTIVITY` is turn state.
+- `--json` switches to a JSON array and preserves `workersAlive` /
+  `workersTotal` while adding separate `durable`, `activity`, and `runtime`
+  objects. `runtime.alive/dead/unknown` share the PID-sidecar denominator;
+  `runtime.matched/orphanSidecars/durableWithoutSidecar` reports correlation
+  without folding missing durable identities into runtime `unknown`.
 
 ---
 
@@ -85,9 +90,13 @@ Behavior:
   means broadcast.
 - `--delivery-mode` selects targeted-delivery validation:
   - `appendOnly` (default-ish — just record),
-  - `requireKnownWorker` (the named target must have a `spawned` event),
-  - `requireRunningWorker` (the worker must currently be live).
-- Prints the appended event as one JSON line on stdout.
+  - `requireKnownWorker` (every named target has a `spawned` event),
+  - `requireRunningWorker` (every target is durably running and its exact
+    local supervisor PID is alive).
+- Strict multi-target delivery is all-or-nothing under one channel lock.
+  Rejection writes only `undeliverable` attempt events, writes no `message`,
+  and exits non-zero. Success prints the appended message JSON. `appendOnly`
+  retains backlog-compatible behavior.
 
 > **Note:** `send` has **no** `--tag` and **no** `--kind` flag. See
 > [`tag-vs-kind`](#tag-vs-kind--how-event-shape-is-actually-controlled) below.
@@ -199,9 +208,8 @@ trellis channel interrupt <name> [text]
 ```
 
 Behavior:
-- Appends an `interrupt` event with `reason: "user"` and a replacement
-  instruction body; supervisor performs provider-level interrupt where
-  supported (Claude `/interrupt`, Codex turn cancel).
+- Appends `interrupt_requested` with `reason: "user"`; the supervisor records
+  `interrupted` after attempting the provider-level redirect.
 - Prints the appended event JSON on stdout.
 
 ---
@@ -217,21 +225,23 @@ trellis channel spawn <name>
   [--provider claude|codex]               # overrides agent file
   [--as <worker-name>]                    # default: agent name
   [--cwd <path>]
-  [--model <id>]
+  [--model <id>]                         # provider model ID
+  [--effort low|medium|high|xhigh|max]   # separate reasoning level
   [--resume <id>]                         # session/thread id resume
-  [--timeout <Ns|Nm|Nh>]                  # auto-kill after duration
+  [--ownership <key>]                     # optional metadata only
+  [--timeout <Ns|Nm|Nh|disabled>]         # warning-only supervision threshold
   [--warn-before <Ns|Nm|Nh>]              # supervisor_warning lead time
-                                          # default 5m, 0ms disables
+                                             # default 5m, 0ms warns at threshold
   [--file <path>] ...                     # glob, repeatable; inject content
   [--jsonl <path>] ...                    # Trellis manifest, repeatable
   [--by <agent>]                          # spawn-event author
                                           # default: TRELLIS_CHANNEL_AS env or 'main'
   [--inbox-policy explicitOnly|broadcastAndExplicit]
                                           # default explicitOnly
-  [--idle-timeout <Ns|Nm|Nh>]             # OOM-guard idle TTL
-                                          # default 5m, 0 disables
+  [--idle-timeout <Ns|Nm|Nh>]             # warning-only idle observation
+                                          # default 5m, 0 disables warning
   [--max-live-workers <n>]                # spawn-time live-worker budget
-                                          # default 6, 0 disables
+                                          # default 25, 0 disables
 ```
 
 Behavior:
@@ -239,9 +249,18 @@ Behavior:
   (`packages/cli/src/commands/channel/adapters/`); current: `claude`,
   `codex`.
 - Worker stays inbox-idle until the first `send --to <worker>`.
+- Returns only after a matching durable `spawned` event; startup errors,
+  supervisor death, and readiness timeout fail instead of reporting success.
 - Records a `spawned` event with `pid`, `provider`, `agent`, `files`,
-  `manifests`.
-- OOM-guard precedence: CLI flag → env var
+  `manifests`, normalized `supervision_timeout_ms`, and explicitly supplied
+  model/effort/ownership/resume metadata. Model and effort are requested
+  configuration; call them provider-observed/applied only when provider output
+  independently supplies that evidence.
+- A numeric spawn timeout emits one non-terminal supervision warning and never
+  signals the worker; omitted or `disabled` records no fixed threshold.
+- The Claude system prompt is passed by an owner-only sidecar file, avoiding
+  Windows command-line length limits.
+- Worker-guard precedence: CLI flag → env var
   (`TRELLIS_CHANNEL_WORKER_IDLE_TIMEOUT`,
   `TRELLIS_CHANNEL_MAX_LIVE_WORKERS`) →
   `.trellis/config.yaml#channel.worker_guard` → built-in defaults.
@@ -255,6 +274,8 @@ trellis channel run [name?]
   [--as <worker-name>]
   [--cwd <path>]
   [--model <id>]
+  [--effort low|medium|high|xhigh|max]
+  [--ownership <key>]
   [--file <path>] ...                     # repeatable, glob
   [--jsonl <path>] ...                    # repeatable
   [--message <text> | --message-file <path> | --stdin]
@@ -263,6 +284,8 @@ trellis channel run [name?]
 
 Behavior:
 - One-shot. Auto-generates `run-<hex>` if `name` omitted.
+- Prefer `--stdin` or `--message-file` for prompt text so shell quoting does not
+  change mixed-language or punctuation-heavy input.
 - Creates an ephemeral channel (`createMode=run`), spawns a single worker,
   sends the prompt, waits for `done`, prints the final assistant text to
   stdout, then removes the channel on success. On failure the channel is
@@ -281,10 +304,43 @@ trellis channel kill <name>
 ```
 
 Behavior:
-- Default path: SIGTERM → 8 s grace → SIGKILL escalation; the CLI writes a
-  `killed` event when SIGKILL was needed so the log stays truthful.
+- Default path: SIGTERM → 8 s grace → SIGKILL escalation; after the exact
+  generation stops, the CLI guarantees exactly one terminal `killed` event.
+  Windows may terminate the supervisor before its signal handler runs, so the
+  CLI reconciles the event under lock; an event already written by a POSIX
+  supervisor is not duplicated.
 - Cleans `pid`, `worker-pid`, `config`, `spawnlock` sidecar files; keeps
   `log`, `session-id`, `thread-id` for forensics / resume.
+- `runtime.durableWithoutSidecar` also counts terminal history. Diagnose leaks
+  from `durable.running` plus runtime sidecars, not that field alone.
+
+### `reclaim <name>`
+
+```bash
+trellis channel reclaim <name>
+  --as <agent>                            # REQUIRED — exactly one worker
+  [--scope project|global]
+  [--dry-run]
+```
+
+Behavior:
+- Takes the worker lock, checks the durable spawn generation and exact local
+  supervisor PID twice, and fails without changes if the PID is alive,
+  invalid, or the generation/sidecar drifted.
+- For a durable spawn with a missing or confirmed-dead PID, appends one
+  synthesized reclaimed terminal event and cleans ephemeral runtime sidecars
+  while preserving logs, session/thread IDs, and inbox cursor. Repeated calls
+  are idempotent.
+- Stable mismatched/legacy residue plus an unchanged non-terminal durable
+  generation dry-runs as `would-reconcile`; one real call appends the exact
+  terminal event, cleans ephemeral residue, and returns `reconciled`.
+- For a pure orphan name, or an already-terminal identity, with concrete
+  ephemeral sidecar evidence but no matching latest launch identity, dry-run
+  reports `would-clean-orphan`; real mode cleans the same sidecars without
+  fabricating another worker event. A same-name spawn or sidecar change during
+  the locked recheck fails closed.
+- Never sends a signal, scans other workers, deletes a channel, or requires
+  an external audit file. Use `kill` for a live process.
 
 ### `rm <name>`
 

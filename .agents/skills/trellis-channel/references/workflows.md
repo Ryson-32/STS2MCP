@@ -64,7 +64,7 @@ trellis channel spawn cr-foo \
 
 trellis channel send cr-foo --as main --to check --text-file /tmp/cr-brief.md
 trellis channel wait cr-foo --as main --kind done --from check --timeout 15m
-trellis channel messages cr-foo --kind message --from check --tag final_answer
+trellis channel messages cr-foo --kind message --from check --last 1 --raw
 ```
 
 For implement work, use `--agent implement` and send an implementation brief.
@@ -93,11 +93,37 @@ trellis channel wait cr-feature --as main --kind done --from check,check-cx --al
 
 `--all` means every listed worker must emit a matching event.
 
+## Persistent Worker Closeout
+
+Patterns A-C use persistent workers. After the last planned turn, inspect the
+current lifecycle summary and close each exact worker; `done` and
+`turn_finished` alone leave the supervisor inbox-idle.
+
+```bash
+trellis channel list --all --json
+trellis channel kill cr-feature --as check
+trellis channel kill cr-feature --as check-cx
+trellis channel list --all --json
+```
+
+If an interrupted session left the exact supervisor missing/dead while durable
+state is still running, use no-signal recovery instead:
+
+```bash
+trellis channel reclaim cr-feature --as check-cx --dry-run
+trellis channel reclaim cr-feature --as check-cx
+trellis channel list --all --json
+```
+
+Verify the current `durable.running` and `runtime` objects for the channel; do
+not parse removed legacy fields such as `lastTimestamp`. `kill` is for a live
+exact generation, while `reclaim` fails closed on live or unknown identity.
+
 ## Pattern D: One-shot Worker
 
 ```bash
-trellis channel run --provider codex --message "say hi in 3 words" --timeout 1m
-trellis channel run --agent plan --message-file /tmp/plan-question.md --timeout 10m
+trellis channel run --provider codex --message-file prompt.txt --timeout 1m
+trellis channel run --agent plan --message-file plan-question.md --timeout 10m
 ```
 
 On success, `run` removes the ephemeral channel. On error/timeout/killed, it
