@@ -58,14 +58,94 @@
 
 ## 运行期监督与中断恢复
 
-- 子代理仍在正常运行且没有会改变其执行的新信息时，主会话优先只读查看状态或等待，不发送只表达“继续”“尽快”或重复询问进度的 follow-up。只有出现新增关键上下文或用户指令、已确认偏航、代理主动请求输入，或达到已声明的 timeout、停滞或停止条件时才联系；消息只传递变化、所需动作和受影响的 ownership。
-- 发生意外中断，或 follow-up/handoff 返回错误、timeout、无回执等不确定结果时，先核对当前状态、已有产物、最近已验证检查点和可能已发生的外部副作用，再决定继续或更换。调用已发起或返回普通成功只能证明调用层事实，不能证明消息已送达、代理已停止或任务已完成。只有语义明确包含目标端接收的平台回执，或目标代理确认收到，才能证明送达；送达不等于停止或完成，停止需由目标状态回读证明，完成仍需核对已约定的产物、检查结果和相关外部状态。
-- 原代理仍可寻址或恢复、上下文可验证且可信、目标和 ownership 未变化，并且继续不会重复已发生或状态未明的外部副作用时，优先续用原代理。原代理不可用、上下文损坏或无法验证、任务或 ownership 已变化，或恢复的重复与冲突风险高于从最近已验证检查点重建时，才新开代理。
-- 新代理接手前，交接更换原因、已验证产物与检查点、未完成范围、当前 ownership、已知副作用和停止条件，并确认旧代理已经停止、退出该 ownership 或完成明确移交。新旧代理不得在同一 ownership 下无交接地并行；旧代理状态不明时冻结该 ownership，只继续互不重叠的工作。
-- 项目或平台可以细化状态、等待、timeout、cancel、resume 和送达回执，但不得假定所有平台都具备同一种恢复或确认机制，也不得用固定的全局等待时长替代上述状态与风险判断。
+### 1. 适用范围与触发
+
+- 本节适用于已进入运行态的子代理和外部 AI worker。启动握手、CLI version probe、
+  provider lock、单次工具调用和测试 fixture 等不承载代理推理状态的短操作，可以保留各自
+  有界 timeout；不得把这些短 timeout 复用成 worker 执行上限。
+- 子代理仍在正常运行且没有会改变其执行的新信息时，主会话优先只读查看状态或等待，
+  不发送只表达“继续”“尽快”或重复询问进度的 follow-up。新增关键上下文或用户指令、
+  已确认偏航、代理主动请求输入，或监督阈值触发时，消息只传递变化、所需动作和受影响的
+  ownership。
+
+### 2. 调度与中断签名
+
+```text
+spawn(role, ownership, timeout_ms?: integer | disabled)
+supervise(worker_id) -> durable_progress + process_activity + wait_state + checkpoint + reachability
+interrupt(worker_id, reason, supervision_evidence, handoff)
+resume(thread_or_session_id, checkpoint, ownership)
+```
+
+- 若为 worker 执行配置自动时间阈值，`timeout_ms` 必须至少为 `7200000`（2 小时）。
+  长任务应优先省略或禁用自动执行上限；平台的 timeout 若到点必然 kill，就不得把它用于
+  长任务，也不能把“已设为 2 小时”当作自动终止许可。
+- 运行阈值只能触发监督检查或告警，不能仅因时间届满自动 interrupt/kill。项目可以采用
+  更长阈值，但不得用更短值覆盖本底线。
+- 外部平台若只提供到点自动 kill 的 timeout，长任务必须省略或禁用该 timeout；做不到时
+  必须明确标记为不符合本合同，不能宣称已经支持本节的监督语义。
+- CLI 文本 `disabled` 的唯一内部和 durable ledger 表示为 JSON `null`；省略值由运行时在
+  单一边界解析为默认 `7200000`。schema、CLI 回读、内部 API、reservation/config 和
+  `spawned`/run ledger 必须保持相同表示，不得把 `null` 静默改回 2 小时。
+
+### 3. 运行合同
+
+- elapsed time、quiet output、slow reasoning 中任意一项或任意组合都不是卡死证据。
+- 手动 interrupt/kill 前必须检查并记录：最近 durable progress/event 时间；进程是否
+  存活以及 CPU、I/O 或日志是否仍增长；是否在等待工具、锁、浏览器、网络或其它外部
+  资源；最近 checkpoint 和可能已经发生的副作用；消息是否可达。某一平台无法观测的项
+  必须标为 `unknown`，不能猜成“无活动”。
+- 只有证据确认卡死、明显偏航、继续运行有危险、需要新的授权/用户已撤销授权，或出现
+  必须立即释放资源的紧急情况，才允许中断。中断前保存可用 checkpoint，明确 ownership
+  退出或 handoff，并在事后回读目标状态证明已经停止。
 - 启动调用返回 supervisor PID 或接受请求只证明启动已被受理。派发首条任务前必须等待
-  目标 worker 的持久化 `spawned` 或等价运行态回读；若等待期间出现启动错误、进程退出
-  或有界 timeout，应停止并清理该精确 worker，不能把未就绪实例当作成功启动。
+  目标 worker 的持久化 `spawned` 或等价运行态回读；启动握手出现错误、进程退出或其自身
+  有界 timeout 时，只清理该精确未就绪实例，不能把未就绪实例当作成功启动。
+- 调用已发起或返回普通成功只证明调用层事实，不能证明消息送达、代理停止或任务完成。
+  只有目标端回执或代理确认才能证明送达；停止需状态回读，完成仍需核对产物、检查和
+  外部状态。
+- 发生错误中断、follow-up/handoff timeout 或无回执时，先核对产物、checkpoint 和副作用。
+  原 thread/session 仍可恢复、上下文可信、目标与 ownership 未变化且不会重复不明副作用时，
+  必须优先 resume 原代理；只有原状态不可用、损坏、无法验证或接管冲突风险更低时才新开。
+- 新代理接手前交接更换原因、已验证产物与检查点、未完成范围、ownership、已知副作用和
+  停止条件，并确认旧代理已停止或明确移交。旧状态不明时冻结该 ownership，只继续互不
+  重叠的工作。
+
+### 4. 验证与失败关闭矩阵
+
+| 现场 | 必须动作 |
+|---|---|
+| 执行阈值小于 2 小时 | 拒绝启动；只有调用方明确选择时才改为 disabled，不得静默改写 |
+| timeout 到点会自动 kill 健康 worker | 长任务禁用该 timeout；改用告警/监督检查 |
+| 仅运行很久、输出安静或推理慢 | 继续等待或只读监督，不得 interrupt |
+| durable progress、进程活动或外部等待仍有任一健康证据 | 保持运行；必要时发送一次含新增信息的消息 |
+| 监督项不完整或互相矛盾 | 标为 `unknown` 并失败关闭中断决定 |
+| 已确认卡死、偏航、危险、新授权门或资源紧急 | 保存 checkpoint/副作用记录和 handoff 后才可中断 |
+| 中断调用 timeout、无回执或状态不明 | 不得声称已停止；回读目标状态并冻结原 ownership |
+| 错误中断后原 session 可验证恢复 | resume 原 thread/session，不从头重复 |
+
+### 5. Good / Base / Bad
+
+- Good：4 小时研究 worker 仍有日志增长且正在等待浏览器结果；监督记录为健康并继续等待。
+- Base：平台必须填写执行阈值时使用不少于 2 小时的告警阈值，到点只触发健康检查。
+- Bad：因为 55 分钟无输出、额度将刷新或模型推理慢，直接 timeout kill 后另开 worker 重做。
+
+### 6. 必需验收
+
+- 本仓库拥有的 adapter/control plane 的配置与 CLI 测试必须拒绝
+  `0 < timeout_ms < 7200000` 的 worker 执行阈值，并覆盖 CLI `disabled` →
+  internal/ledger `null`、省略 → `7200000` 与恰好 2 小时的边界。
+- 本仓库拥有的监督实现测试必须证明阈值触发不会自动终止仍存活的 worker；显式人工取消
+  仍可执行，但调用方必须先满足监督证据与 handoff 合同。
+- 恢复测试必须证明可寻址的原 thread/session 被优先复用，且新旧 worker 不会同时持有同一
+  ownership。启动/锁/probe 的短 timeout 测试与 worker 执行阈值测试必须分开命名。
+
+### 7. Wrong vs Correct
+
+Wrong：`timeout_ms=3300000`，到点无条件 `kill`，再以新 session 重跑。
+
+Correct：长任务禁用 hard timeout，或使用 `timeout_ms>=7200000` 的监督告警；到点完成健康
+检查，只有具备允许中断的证据时才人工停止，并优先从原 session/checkpoint 恢复。
 
 ## 能力事实与选择
 
@@ -124,7 +204,9 @@
 ## 独立 Claude worker 进程合同
 
 - 默认使用一次性 print mode：参数数组包含 `-p --output-format json --no-session-persistence`，prompt 通过 stdin 或受保护文件传入，不拼接 shell 命令。需要连续上下文时，必须显式选择 persistent mode 和 session identity。
-- adapter 必须实现进程启动、JSON 解析、timeout、cancel、退出码/stderr 分类和输出大小边界。真实调用可能产生费用或外部动作时，必须由当前授权单独覆盖；测试优先使用 fake executable 和合成输入。
+- adapter 必须实现进程启动、JSON 解析、只告警的监督 timeout、显式 cancel、退出码/stderr
+  分类和输出大小边界；cancel 的调用方负责提供本节要求的监督证据。真实调用可能产生费用
+  或外部动作时，必须由当前授权单独覆盖；测试优先使用 fake executable 和合成输入。
 - `--settings` 只指向本次进程的显式设置；进程级 env 只注入当前 worker。声明 `per-process` 隔离时必须存在真实 provider 设置或 provider 环境证据，普通 `LANG`、测试变量等任意 env 不足以绕过 active-global 互斥。不得读取、重写或切换用户级 Claude、Codex、CC Switch、provider 或认证配置。
 - 并行 worker 不能反复切换同一个全局 active provider。能够用 per-process settings/env 证明进程隔离时才可跨 provider 并行；否则 `provider-serial` 表示所有依赖同一个 active-global 配置面板的 worker 共用一把互斥锁，不只是同一 provider ID 内串行。不同 provider 只要都依赖 CC Switch 等同一个全局 active 状态，也必须彼此串行。
 - 每台设备先探测实际 executable、CLI 版本和 `--model` / `--effort` / `--agents` 支持。远端非登录 shell 的 `PATH` 可能不同，必须使用已验证的发现入口，不能因为本地 shell 可用就推断远端可用。
@@ -152,5 +234,5 @@
 - 路由无效、规范缺失或不同角色得到不同规范集合。
 - 能力导出版本/来源不明、provider 模型被虚构映射，或安全目标没有合格候选。
 - requested 与 observed 混写、effort 覆盖未处理、降级没有原因或模型证据来源不可解释。
-- executable/flag/version 探测失败、JSON 无法解析、timeout/cancel 无法执行或 persistent session 身份不明确。
+- executable/flag/version 探测失败、JSON 无法解析、监督 timeout/cancel 无法审计，或 persistent session 身份不明确。
 - per-process provider 隔离无法证明且调度器仍让任意两个依赖同一个 active-global 状态的 worker 并行，包括 provider ID 不同的 worker。
