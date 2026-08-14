@@ -18,7 +18,7 @@ max_journal_lines: 2000
 channel:
   worker_guard:
     idle_timeout: 5m
-    max_live_workers: 6
+    max_live_workers: 25
   # trusted_context_dirs:
   #   - /work/user/trellis_workspace
   # auto_trust_trellis_symlinks: false
