@@ -285,8 +285,8 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
             )
         else:
             next_action = (
-                "Lightweight task may proceed with PRD-only when current authorization covers the scope; "
-                "complex task must add design.md and implement.md before `task.py start`."
+                "A concise PRD may stand alone; add design.md or implement.md only when they "
+                "materially improve decisions, coordination, validation, handoff, or recovery."
             )
         return (
             f"Status: PLANNING\nTask: {task_title}\nPresent: {present_line}\n"

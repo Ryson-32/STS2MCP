@@ -55,7 +55,7 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
    - likely out-of-scope items
 4. If a user-owned decision remains, ask the single highest-value question, include your recommendation and trade-off, then stop. Do not perform implementation work in the same turn.
 5. After each user answer, update `prd.md`, recompute the decision inventory, and repeat from step 2.
-6. When no user-owned decision remains, create or update `design.md` and `implement.md` for complex tasks.
+6. When useful, add `design.md` or `implement.md` for boundaries, coordination, validation, or recovery; do not create them by category alone.
 7. Run the requirement convergence gate, then the PRD convergence pass.
 8. Present the final planning summary. If the user's explicit implementation request still covers the final scope, `task.py start` and implementation may continue without waiting for a ceremonial reply.
 9. If the artifacts materially change scope, risk, compatibility, external effects, or acceptance behavior, ask for the newly required decision before implementation.
@@ -135,7 +135,7 @@ Before final review, verify all of the following:
 - blocking open questions are empty
 - technical unknowns are researched or explicitly deferred without changing MVP behavior
 
-Lightweight tasks may omit `design.md` and `implement.md`; they may not skip evidence inspection, requirement convergence, final review, or valid implementation authorization.
+Design and implementation notes are optional when the PRD is sufficient; evidence inspection, requirement convergence, and valid implementation authorization still apply.
 
 The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Criteria, Key Decisions, relevant Risks or Deferred Items, and artifact status.
 
@@ -165,7 +165,7 @@ The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Cr
 - risky files or rollback points
 - follow-up checks before `task.py start`
 
-Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start`.
+A concise `prd.md` may stand alone. Add `design.md` or `implement.md` only when they materially improve decisions, execution, handoff, or recovery.
 
 `implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, use `implement.jsonl` and `check.jsonl` only when curated context handoff is useful. When used, entries must resolve to real spec/research files; absent or seed-only manifests do not block `task.py start`. Inline workflows normally load context through `trellis-before-dev`.
 
@@ -192,7 +192,7 @@ Before declaring planning ready:
 - `prd.md` has passed the PRD convergence pass: no unresolved temporary brainstorm sections, no duplicate facts across sections, and no lost anchors, decisions, or acceptance mappings.
 - Repository-answerable questions have already been answered through inspection.
 - Blocking open questions are empty.
-- Complex tasks have `design.md` and `implement.md`.
+- Optional design or implementation notes exist when they materially help the task.
 - Any JSONL manifest used for handoff contains real, relevant, resolvable entries; otherwise it may remain absent or seed-only.
 - The final planning summary is available.
 - Existing implementation authorization still covers the final scope, or any newly required user decision has been resolved.

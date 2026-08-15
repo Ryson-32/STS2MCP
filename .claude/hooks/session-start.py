@@ -490,16 +490,11 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
             if not exists
         ]
         next_bits: list[str] = []
-        if missing_complex:
-            next_bits.append(
-                "Lightweight task may proceed with PRD-only when current authorization covers the scope; "
-                f"complex task must add {', '.join(missing_complex)} before start"
-            )
-        else:
-            next_bits.append(
-                "Planning artifacts are present; if current implementation authorization covers the final "
-                "scope, run `task.py start` without a formal second approval"
-            )
+        next_bits.append(
+            "A concise PRD may stand alone; add design or implementation notes only when they improve "
+            "decisions, coordination, validation, handoff, or recovery. If current implementation "
+            "authorization covers the final scope, run `task.py start` without a formal second approval"
+        )
         return (
             f"Status: PLANNING\nTask: {task_title}\n"
             f"Present: {present_line}\n"

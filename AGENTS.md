@@ -35,14 +35,17 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 <!-- TRELLIS-PROFILE:START -->
 ## 共享 Trellis 规则路由
 
-一项任务可能命中多行。开始实质工作前，必须打开每个命中的规则正文；本表只负责路由，不代替正文。
+1. 每次只打开一个命中的规范文件；不要在同一次工具调用中拼接多个长规范。
+2. 工具报告输出被截断时，必须按行段继续读取直到 EOF；未完整读取的规范不得作为已加载并据此执行。
+
+一项任务可能命中多行。开始实质工作前，必须打开每个命中的规则正文；本表只负责场景路由，不复制规则正文。
 
 | 什么时候读取 | 必须打开的规则正文 |
 |---|---|
 | 新增、迁移、合并或修改长期规则时 | [规则归属与优先级](.trellis/spec/shared/rule-ownership-and-precedence.md) |
 | Mac/Windows 开工、交接、提交或同步时 | [双端 Git 协作](.trellis/spec/shared/cross-device-git.md) |
 | 仓库跟踪外部上游并长期保留本地或私有偏离时 | [上游跟踪与分叉治理](.trellis/spec/shared/upstream-fork-governance.md) |
-| 规划复杂任务、选择或启动子代理/外部 AI worker、分发规范上下文或记录 requested/observed 身份时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
+| 规划复杂任务、选择或启动子代理/外部 AI worker、分配 ownership、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
 | 更新 Trellis、处理跟踪/忽略或 Registry 时 | [Trellis 项目状态](.trellis/spec/shared/trellis-project-state.md) |
 | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 | [长期知识沉淀](.trellis/spec/shared/durable-knowledge.md) |
 | 调查、检索、下载、入库或整理文献、获取或生成数据与产物、测试、完成声明和最终交接时 | [证据与验证](.trellis/spec/shared/evidence-and-verification.md) |
@@ -62,5 +65,5 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 读取 Python MCP Bridge Contract 项目合同 | [Python MCP Bridge Contract](.trellis/spec/mcp/index.md) | [索引](.trellis/spec/mcp/index.md) |
 | 读取 C# Mod And HTTP API Contract 项目合同 | [C# Mod And HTTP API Contract](.trellis/spec/mod/index.md) | [索引](.trellis/spec/mod/index.md) |
 
-普通小任务无需 `routing.json`。文件存在时，主会话与 research/implement/check 必须验证同一共同 baseline；各角色只再读取自己的 supplement，并以 `common + 当前角色` 作为有效集合。原生 `SubagentStart` 注入为首选，自行读取该文件为回退；缺失文件不报错，存在但无效时失败关闭。任务阶段与调度另见 `.trellis/workflow.md`；项目业务合同与例外仍由本文件托管块外及声明的项目索引管理。冲突时按[共享索引](.trellis/spec/shared/index.md)的优先级处理。
+普通小任务无需 `routing.json`。文件存在时，它只是复杂交接的可选路径与理由提示；缺失不报错，也不承担摘要、模型资格或运行状态合同。任务阶段与验证深度见 [workflow](.trellis/workflow.md)；项目合同与例外由托管块外正文和项目规范拥有，冲突时按[共享索引](.trellis/spec/shared/index.md)的优先级处理。
 <!-- TRELLIS-PROFILE:END -->
