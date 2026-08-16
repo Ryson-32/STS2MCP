@@ -3,7 +3,7 @@
   "hashes": {
     ".agents/skills/trellis-before-dev/SKILL.md": "02a88bae9ee5c8d56e1cf278699dd713b6b081dd9fe919f66a9ada6040eb99e0",
     ".agents/skills/trellis-brainstorm/SKILL.md": "3b4f527d8d19243f7e7676424e5c762143d50cac809e3108242d72f2de26bc22",
-    ".agents/skills/trellis-break-loop/SKILL.md": "c39ac385f9e7e53147dc95d67e044bbcbd989a8fc3bbdb04e324aaff8a259ad5",
+    ".agents/skills/trellis-break-loop/SKILL.md": "f5a93699832f29dee443b53c135a7459519b371f689af191d15c29e8ee5c7bde",
     ".agents/skills/trellis-channel/references/command-reference.md": "5203b3251ed4b26f92f0d831c834ab60ca72ca8de12ac39dd3fee3a60e6b6c06",
     ".agents/skills/trellis-channel/references/forum.md": "407db39e8ebde47cea8637e3069bdb3d76ba42b43ed1d08ba97a56f26dbcfcb4",
     ".agents/skills/trellis-channel/references/progress-debugging.md": "0fcd48e0b107f75530ab461400339701512650bbea21f75e00df2a56fbbcbb14",
@@ -58,7 +58,7 @@
     ".claude/settings.json": "01226db3027908dac1260955e205877ee46c1d410912172d8bae9c53527b3b0f",
     ".claude/skills/trellis-before-dev/SKILL.md": "02a88bae9ee5c8d56e1cf278699dd713b6b081dd9fe919f66a9ada6040eb99e0",
     ".claude/skills/trellis-brainstorm/SKILL.md": "3b4f527d8d19243f7e7676424e5c762143d50cac809e3108242d72f2de26bc22",
-    ".claude/skills/trellis-break-loop/SKILL.md": "c39ac385f9e7e53147dc95d67e044bbcbd989a8fc3bbdb04e324aaff8a259ad5",
+    ".claude/skills/trellis-break-loop/SKILL.md": "f5a93699832f29dee443b53c135a7459519b371f689af191d15c29e8ee5c7bde",
     ".claude/skills/trellis-channel/references/command-reference.md": "5203b3251ed4b26f92f0d831c834ab60ca72ca8de12ac39dd3fee3a60e6b6c06",
     ".claude/skills/trellis-channel/references/forum.md": "407db39e8ebde47cea8637e3069bdb3d76ba42b43ed1d08ba97a56f26dbcfcb4",
     ".claude/skills/trellis-channel/references/progress-debugging.md": "0fcd48e0b107f75530ab461400339701512650bbea21f75e00df2a56fbbcbb14",

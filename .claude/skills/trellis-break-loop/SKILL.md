@@ -111,7 +111,6 @@ Three levels of insight:
 
 30 minutes of analysis saves 30 hours of future debugging.
 
-
 ## Thinking Framework: Bayesian Reasoning
 
 When multiple root causes are plausible and evidence is incomplete, update your beliefs proportionally to new evidence rather than clinging to initial assumptions.
