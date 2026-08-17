@@ -34,12 +34,13 @@
 | `gpt-5.6-sol` | `high` | 有一定复杂度但范围明确；普通探索、跨文件分析 |
 | `gpt-5.6-sol` | `xhigh` | 默认通用档；归类困难、需求有歧义或涉及多个系统 |
 | `gpt-5.6-sol` | `max` | 高复杂度技术任务、关键逻辑和科学推理；领域规则禁止 Fable 时的强力替代 |
-| `claude-opus-5` | `xhigh` | 能力定位在 Sol Medium 与 Sol High 之间且更接近 Sol High；约束明确的编码、前端、重构和普通文案，也适合并行拆分 |
-| `claude-fable-5` | `xhigh` | 重要 UI/文案优化、复杂问题探索、独立复核和高价值验证 |
-| `claude-fable-5` | `max` | Fable xhigh 已实际返回、且结果显示深度不足时再升级 |
+| `claude-fable-5[1m]` | `xhigh` | 选择 Fable 5 时的默认首选；适合重要 UI/文案优化、复杂问题探索、独立复核和高价值验证 |
+| `claude-fable-5[1m]` | `max` | Fable xhigh 已实际返回、且结果显示深度不足时再升级 |
+| `claude-opus-5[1m]` | `xhigh` | 选择 Opus 5 时的默认首选；能力定位在 Sol Medium 与 Sol High 之间且更接近 Sol High，适合约束明确的编码、前端、重构和普通文案，也适合并行拆分 |
 
-- 模型 ID 与 effort 是独立字段；不得拼成伪模型 ID。调用面没有独立 effort 通道时，只传真实模型 ID，并把 effort 视为未应用或不可观测。
-- 无法可靠归类时通常选择 `gpt-5.6-sol` + `xhigh`；约束完整的编码实现可优先 `claude-opus-5` + `xhigh`；普通探索可从 Sol high 开始。
+- 模型 ID 与 effort 是独立字段；不得拼成伪模型 ID。`[1m]` 是当前 Claude provider 模型 ID 的上下文限定符，不是 effort。调用面没有独立 effort 通道时，只传真实模型 ID，并把 effort 视为未应用或不可观测。
+- 已经选择 Fable 5 时，按 `claude-fable-5[1m]` → `claude-fable-5` 尝试；已经选择 Opus 5 时，按 `claude-opus-5[1m]` → `claude-opus-5` 尝试。只有同一家族的 1M 候选被当前调用面或 provider 明确拒绝、不可用或无法返回时，才使用该家族不带上下文限定符的候选；1M 候选无效本身不授权切换模型家族。每次尝试仍须分别记录 requested 与 observed；静默降级或跨模型重映射不算请求候选已实际返回。
+- 无法可靠归类时通常选择 `gpt-5.6-sol` + `xhigh`；需要 Claude 时先按任务选择 Fable 5 或 Opus 5，再遵循对应的家族内回退顺序；普通探索也可从 Sol high 开始。
 - 高价值 `check` 优先考虑与实现者不同的模型家族，以增加独立视角；这是偏好而非强制。当前模型不可用、项目禁用、成本不合适或干净上下文已能提供独立性时，可以使用同一模型家族。
 - Fable 通常先用 xhigh，只有实际结果不足时才考虑 max；不为这个升级建立证据文件、task ID、ledger 或失败关闭流程。
 - 安全审查等安全主目标通常不交给 Fable；优先使用项目能力 owner 明确允许承担安全主目标的候选，当前表中的通用强力替代是 `gpt-5.6-sol` + `max`。这是能力边界建议，不要求普通任务先生成资格证明。
