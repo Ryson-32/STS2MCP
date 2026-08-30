@@ -45,7 +45,7 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 新增、迁移、合并或修改长期规则时 | [规则归属与优先级](.trellis/spec/shared/rule-ownership-and-precedence.md) |
 | Mac/Windows 开工、交接、提交或同步时 | [双端 Git 协作](.trellis/spec/shared/cross-device-git.md) |
 | 仓库跟踪外部上游并长期保留本地或私有偏离时 | [上游跟踪与分叉治理](.trellis/spec/shared/upstream-fork-governance.md) |
-| 规划复杂任务、选择或启动子代理/外部 AI worker、分配 ownership、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
+| 规划复杂任务、选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
 | 更新 Trellis、处理跟踪/忽略或 Registry 时 | [Trellis 项目状态](.trellis/spec/shared/trellis-project-state.md) |
 | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 | [长期知识沉淀](.trellis/spec/shared/durable-knowledge.md) |
 | 调查、检索、下载、入库或整理文献、获取或生成数据与产物、测试、完成声明和最终交接时 | [证据与验证](.trellis/spec/shared/evidence-and-verification.md) |

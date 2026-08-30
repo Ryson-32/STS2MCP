@@ -228,7 +228,7 @@ Sub-agent dispatch protocol applies to all platforms and all sub-agents, includi
 
 [workflow-state:in_progress]
 Tools: `trellis-implement` / `trellis-research` are sub-agent roles, not skills. `trellis-check` may be an agent or inline skill; `trellis-update-spec` is a skill.
-Read the active task and relevant specs. Delegate bounded implementation when it helps; always name the active task, ownership, protected parallel work, expected result, and checks. Native `SubagentStart` injection is preferred; child-side loading is the fallback.
+Read the active task and relevant specs. Delegate bounded implementation when it helps; always name the active task, objective, starting baseline, protected shared state, expected result, and checks. Production-writing workers use the shared isolated-worktree contract; read-only work does not need a worktree. Native `SubagentStart` injection is preferred; child-side loading is the fallback.
 Run the cheapest checks that cover the affected behavior and self-fix findings. Small changes may be author-checked; use an independent reviewer for scientific meaning, cross-module contracts, high-impact acceptance, or unresolved uncertainty. A different model family is a useful preference, not a completion requirement.
 Update specs only for durable knowledge or reusable contracts. Report skipped or failed checks honestly, then commit or hand off according to repository authority.
 [/workflow-state:in_progress]
@@ -461,7 +461,7 @@ Before editing, read `{TASK_DIR}/prd.md`, optional `design.md` / `implement.md`,
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, CodeBuddy, Droid, Pi, ZCode, Snow, Oh My Pi]
 
-When delegation helps, spawn `trellis-implement`. The dispatch prompt starts with `Active task: <task path>` and then gives the bounded objective, file/module ownership, protected parallel work, expected result, and necessary checks. Tell the spawned role it is already the implementer and must not recursively dispatch another implement/check role.
+When delegation helps, spawn `trellis-implement`. The dispatch prompt starts with `Active task: <task path>` and then gives the bounded objective, starting baseline, protected shared state, expected result, and necessary checks. Production-code writers default to their own short-lived worktree and build directory; exact file ownership is not a launch prerequisite. Tell the spawned role it is already the implementer and must not recursively dispatch another implement/check role.
 
 The platform hook/plugin supplies `prd.md`, optional design/implementation notes, and referenced `implement.jsonl` context. Native `SubagentStart` injection is preferred; child-side loading is the fallback when injection is unavailable or truncated.
 
@@ -469,13 +469,13 @@ The platform hook/plugin supplies `prd.md`, optional design/implementation notes
 
 [Gemini, Qoder, Copilot, Reasonix, Trae, Grok, Kimi Code]
 
-When delegation helps, spawn the platform's implement/coder role with the same active-task, ownership, protected-work, result, and check fields. Pull-based agents resolve the active task, then read `prd.md`, optional `design.md` / `implement.md`, and every real `implement.jsonl` entry before coding. On Grok Build use `spawn_subagent`; on Kimi Code use the built-in `coder` / `explore` role with the matching Trellis instructions.
+When delegation helps, spawn the platform's implement/coder role with the same active-task, objective, baseline, protected-state, result, and check fields plus the shared worktree default. Pull-based agents resolve the active task, then read `prd.md`, optional `design.md` / `implement.md`, and every real `implement.jsonl` entry before coding. On Grok Build use `spawn_subagent`; on Kimi Code use the built-in `coder` / `explore` role with the matching Trellis instructions.
 
 [/Gemini, Qoder, Copilot, Reasonix, Trae, Grok, Kimi Code]
 
 [Kiro]
 
-When delegation helps, spawn `trellis-implement` with the same ownership contract. Kiro's platform prelude injects task artifacts and real `implement.jsonl` entries; the child implements directly and does not recursively dispatch implement/check.
+When delegation helps, spawn `trellis-implement` with the same bounded objective, baseline, expected-result and isolated-worktree contract. Kiro's platform prelude injects task artifacts and real `implement.jsonl` entries; the child implements directly and does not recursively dispatch implement/check.
 
 [/Kiro]
 
@@ -485,7 +485,7 @@ Load `trellis-before-dev`, read the task artifacts and relevant specs/research, 
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
-The main session remains responsible for integration, user decisions, cross-worker coordination, and commit/push authority. An interrupted worker is resumed when safe under the shared subagent recovery contract; replacement is not the automatic first response.
+Workers may form independently verifiable lane commits when repository authority allows. The main session remains responsible for candidate comparison, integration order, conflict resolution, user decisions, shared validation and final push. An interrupted worker is resumed when safe under the shared subagent recovery contract; replacement is not the automatic first response.
 
 #### 2.2 Validate affected scope `[required · repeatable]`
 
@@ -493,7 +493,7 @@ Start with the cheapest check that can falsify the change, then run the relevant
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
-The implementer performs local self-checks and fixes findings. Use a separate `trellis-check` agent when the triggers in 2.3 apply or a clean independent pass has clear value. Its prompt starts with `Active task: <task path>`, names the affected contracts and ownership, and tells the role to review/fix directly without recursively spawning implement/check.
+The implementer performs local self-checks and fixes findings. Use a separate `trellis-check` agent when the triggers in 2.3 apply or a clean independent pass has clear value. Its prompt starts with `Active task: <task path>` and names the affected contracts, baseline and expected result. A read-only reviewer may use the shared checkout; a reviewer authorized to change production code uses an isolated worktree and does not recursively spawn implement/check.
 
 The check role reads `check.jsonl` when present plus the task artifacts, reviews against the owning specs, fixes scoped findings, and reruns the checks that cover those findings. If no independent review trigger applies, the main session can perform this affected-scope validation itself.
 
