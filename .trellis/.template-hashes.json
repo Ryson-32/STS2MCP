@@ -170,7 +170,7 @@
     ".trellis/spec/shared/safe-workflow-and-efficiency.md": "f85c447522d4f4fbd69a7a3ae566ea8b07a1d1c36952cd60a37c4b5de1789527",
     ".trellis/spec/shared/sensitive-data.md": "7539a5c93d8b083a255be569ae9f075c465043e3cd0f97f0c8d2007f65959eb6",
     ".trellis/spec/shared/shell-and-command-portability.md": "31817c4e9c6026208f65270719d44bb9663ddcf33654488e24fb2be895735978",
-    ".trellis/spec/shared/subagent-orchestration.md": "bdb6cad75c6cd0f9ac909e6cacb94bf8635af4ad05dde7c65337b3081f86db35",
+    ".trellis/spec/shared/subagent-orchestration.md": "b1cacf0c45b14db645d5923c941f46ba1610913ed4d370f9030aeb78ed21163d",
     ".trellis/spec/shared/trellis-project-state.md": "a2957a693aeeaa1479ecad75e9ecbe3c75cf625339ed17cf2f53c322535aca47",
     ".trellis/spec/shared/upstream-fork-governance.md": "dbc34352e8b7c48bf47d621f730394e622c8649c5c46cabd8e91799ae4abafe7",
     ".trellis/workflow.md": "3a44ff57d6bce4579bb2ae5ade86425a9b8175dac491336e1c4644bb912d0002",
