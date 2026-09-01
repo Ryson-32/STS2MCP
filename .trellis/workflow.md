@@ -119,6 +119,7 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
 
   TAG ↔ PHASE scoping:
     [workflow-state:no_task]      → no active task; before Phase 1
+    [workflow-state:task_error]   → active task record is unreadable; repair it before continuing
     [workflow-state:planning]     → all of Phase 1 (status='planning')
     [workflow-state:planning-inline] → Codex inline variant of Phase 1
     [workflow-state:in_progress]  → Phase 2 + Phase 3.2-3.4
@@ -181,6 +182,14 @@ Simple conversation, read-only review, or small task: continue inline when persi
 Complex multi-step, release/install, production, cross-session, or high-risk work: create a Trellis task directly and enter planning unless the user explicitly opts out.
 Ask the user only when scope, risk, or a required product decision is unclear; never ask solely to confirm task creation. Creating planning metadata does not broaden implementation authority.
 [/workflow-state:no_task]
+
+<!-- Per-turn breadcrumb: shown when the active task record cannot be read. -->
+
+[workflow-state:task_error]
+The active task record could not be read. Do not create or activate another task.
+Inspect the task directory named above and repair its task.json. It must be a valid JSON object with a non-empty status.
+Preserve existing task fields and artifacts. If the correct status cannot be determined safely, ask the user before reconstructing the record.
+[/workflow-state:task_error]
 
 ### Phase 1: Plan
 - 1.0 Create task `[required · once]` (when persistence is useful; no separate consent gate)
@@ -603,6 +612,7 @@ All tag blocks live in the `## Phase Index` section above, immediately after eac
 | Scope | Corresponding tag |
 |---|---|
 | No active task (before Phase 1) | `[workflow-state:no_task]` (after the Phase Index ASCII art) |
+| Active task record unreadable | `[workflow-state:task_error]` (repair the existing task before continuing) |
 | All of Phase 1 (task created → ready for implementation) | `[workflow-state:planning]` (after Phase 1 summary) |
 | Codex inline Phase 1 | `[workflow-state:planning-inline]` |
 | Phase 2 + Phase 3.2–3.4 (implementation + check + wrap-up) | `[workflow-state:in_progress]` (after Phase 2 summary) |

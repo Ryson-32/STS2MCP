@@ -34,10 +34,10 @@ Use this skill when a task needs collaborative planning. A task may be created d
 If no task exists yet, create one:
 
 ```bash
-TASK_DIR=$(python ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
+TASK_DIR=$(python ./.trellis/scripts/task.py create "<short task title>" --description "<one-line summary>" --slug <slug>)
 ```
 
-Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
+Use a concise title from the user's request. Both the title and `--description` must be non-empty — `create` rejects blanks, and a record with either one empty is refused at archive. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
 
 `task.py create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
 
@@ -167,7 +167,7 @@ The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Cr
 
 A concise `prd.md` may stand alone. Add `design.md` or `implement.md` only when they materially improve decisions, execution, handoff, or recovery.
 
-`implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, use `implement.jsonl` and `check.jsonl` only when curated context handoff is useful. When used, entries must resolve to real spec/research files; absent or seed-only manifests do not block `task.py start`. Inline workflows normally load context through `trellis-before-dev`.
+`implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, `implement.jsonl` and `check.jsonl` must each contain at least one real spec/research entry before `task.py start`; an empty manifest, or one holding only a legacy `_example` placeholder row, does not count. Inline workflows skip this JSONL gate because Phase 2 loads context through `trellis-before-dev`.
 
 ## PRD Convergence Pass
 

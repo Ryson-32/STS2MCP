@@ -35,13 +35,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .git import run_git
+from .git import run_git, run_git_retry_index_lock
 from .paths import (
     DIR_ARCHIVE,
     DIR_TASKS,
     DIR_WORKFLOW,
     DIR_WORKSPACE,
     FILE_JOURNAL_PREFIX,
+    FILE_TASK_JSON,
     get_developer,
 )
 
@@ -145,26 +146,34 @@ def safe_archive_paths_to_add(
     repo_root: Path,
     task_name: str | None = None,
     modified_children: list[str] | None = None,
+    archive_destination: Path | str | None = None,
 ) -> list[str]:
     """Return paths to stage after `task.py archive`.
 
     Scoped to ONLY the paths the archive operation actually touched:
 
-      - the archive subtree (where the freshly-moved task lives)
-      - the source task directory (for source-side deletes; caller pairs
-        this with `git rm --cached` since `git add` won't stage deletes
-        for a path that no longer exists in the working tree)
-      - any child task directories whose `task.json` was edited to drop
+      - the exact dated archive destination where the task was moved
+      - any child task's exact `task.json` path when it was edited to drop
         the archived parent (parent-children relationship update)
+
+    The moved-away source directory is intentionally not returned because it
+    no longer exists for `git add`; the caller stages those tracked deletions
+    explicitly with `git rm --cached`.
 
     This narrow scope avoids "scope creep" — dirty changes in OTHER
     active task dirs (parallel-window edits) are NOT bundled into the
     archive commit. Callers handle each kind of change in its own
     commit boundary.
 
-    Backwards-compat: with no arguments, the function walks the whole
-    `.trellis/tasks/` subtree the old way (active tasks + archive). New
-    callers should always pass `task_name`.
+    ``archive_destination`` is validated as a direct
+    ``archive/<YYYY-MM>/<task_name>`` descendant. For compatibility with
+    existing callers that pass only ``task_name``, the destination is
+    resolved only when exactly one matching archived task directory exists.
+    Missing, ambiguous, malformed, or out-of-root destinations fail closed.
+
+    ``task_name`` remains optional in the signature for source compatibility,
+    but an exact archive staging set cannot be computed without it; in that
+    case this function fails closed instead of staging the archive root.
     """
     paths: list[str] = []
     tasks_dir = repo_root / DIR_WORKFLOW / DIR_TASKS
@@ -173,29 +182,82 @@ def safe_archive_paths_to_add(
 
     archive_dir = tasks_dir / DIR_ARCHIVE
 
-    if task_name is not None:
-        # Narrow scope — only paths that still exist on disk (so
-        # `git add` doesn't choke on the moved-away source). The caller
-        # handles the source-side deletes via `git rm --cached`
-        # explicitly.
-        if archive_dir.is_dir():
-            paths.append(
-                f"{DIR_WORKFLOW}/{DIR_TASKS}/{DIR_ARCHIVE}"
-            )
-        for child_name in modified_children or []:
-            paths.append(f"{DIR_WORKFLOW}/{DIR_TASKS}/{child_name}")
-        return paths
+    if not task_name:
+        raise ValueError("task_name is required for exact archive staging")
 
-    # Legacy wide scope (no task_name): preserve old behavior so callers
-    # that have not been updated keep working.
-    if archive_dir.is_dir():
-        paths.append(f"{DIR_WORKFLOW}/{DIR_TASKS}/{DIR_ARCHIVE}")
-    for child in sorted(tasks_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name == DIR_ARCHIVE:
-            continue
-        paths.append(f"{DIR_WORKFLOW}/{DIR_TASKS}/{child.name}")
+    archive_root = archive_dir.resolve()
+    destination: Path | None
+    if archive_destination is not None:
+        destination = Path(archive_destination)
+        if not destination.is_absolute():
+            destination = repo_root / destination
+        destination = destination.resolve()
+    else:
+        matches = sorted(
+            candidate.resolve()
+            for month_dir in archive_dir.iterdir()
+            if month_dir.is_dir()
+            for candidate in [month_dir / task_name]
+            if candidate.is_dir()
+        ) if archive_dir.is_dir() else []
+        if len(matches) != 1:
+            qualifier = "no" if not matches else "multiple"
+            raise ValueError(
+                f"{qualifier} unique archive destination found for {task_name!r}"
+            )
+        destination = matches[0]
+
+    try:
+        destination_parts = destination.relative_to(archive_root).parts
+    except ValueError as exc:
+        raise ValueError(
+            f"archive destination is outside {archive_dir}: {destination}"
+        ) from exc
+
+    if len(destination_parts) != 2 or destination_parts[1] != task_name:
+        raise ValueError(
+            "archive destination must be "
+            f"{archive_dir}/<YYYY-MM>/{task_name}: {destination}"
+        )
+    if not destination.is_dir():
+        raise ValueError(f"archive destination is not a directory: {destination}")
+
+    year_month = destination_parts[0]
+    if (
+        len(year_month) != 7
+        or year_month[4] != "-"
+        or not year_month[:4].isdigit()
+        or not year_month[5:].isdigit()
+        or not 1 <= int(year_month[5:]) <= 12
+    ):
+        raise ValueError(
+            f"archive destination must use a YYYY-MM directory: {destination}"
+        )
+
+    try:
+        destination_rel = destination.relative_to(repo_root.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            f"archive destination is outside repository root: {destination}"
+        ) from exc
+    paths.append(destination_rel.as_posix())
+
+    tasks_root = tasks_dir.resolve()
+    for child_name in modified_children or []:
+        child_path = (tasks_dir / child_name).resolve()
+        child_task_json = child_path / FILE_TASK_JSON
+        if (
+            child_path.parent != tasks_root
+            or not child_path.is_dir()
+            or not child_task_json.is_file()
+        ):
+            raise ValueError(
+                "modified child must be a direct task directory containing "
+                f"{FILE_TASK_JSON}: {child_name}"
+            )
+        child_rel = child_task_json.relative_to(repo_root.resolve()).as_posix()
+        if child_rel not in paths:
+            paths.append(child_rel)
     return paths
 
 
@@ -208,7 +270,7 @@ def _stderr_indicates_ignored(stderr: str) -> bool:
 
 
 def safe_git_add(
-    paths: list[str], repo_root: Path
+    paths: list[str], repo_root: Path, retry_on_index_lock: bool = False
 ) -> tuple[bool, bool, str]:
     """Run `git add` on specific paths; never retry with -f.
 
@@ -222,11 +284,18 @@ def safe_git_add(
       - Plain fails (any reason — ignored or otherwise) → return failure with
         the stderr. Callers should inspect the stderr (see
         :func:`print_gitignore_warning`) and skip the auto-commit.
+
+    ``retry_on_index_lock`` opts into the bounded backoff-retry for a held
+    ``.git/index.lock`` (see :func:`~.git.run_git_retry_index_lock`). It is
+    off by default: only the archive path, which has already moved the task
+    directory on disk by the time it stages, needs to wait out a transient
+    lock rather than fail.
     """
     if not paths:
         return True, False, ""
 
-    rc, _, err = run_git(["add", "--", *paths], cwd=repo_root)
+    runner = run_git_retry_index_lock if retry_on_index_lock else run_git
+    rc, _, err = runner(["add", "--", *paths], cwd=repo_root)
     if rc == 0:
         return True, False, ""
     return False, False, err
