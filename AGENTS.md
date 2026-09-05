@@ -35,24 +35,27 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 <!-- TRELLIS-PROFILE:START -->
 ## 共享 Trellis 规则路由
 
-1. 每次只打开一个命中的规范文件；不要在同一次工具调用中拼接多个长规范。
-2. 工具报告输出被截断时，必须按行段继续读取直到 EOF；未完整读取的规范不得作为已加载并据此执行。
+1. 先选择当前任务直接命中的规则文件；正文链接只有在任务也命中其场景时才继续读取，不做传递式全量加载。
+2. 每次只打开一个选中的规则文件。输出被截断时按行段继续到 EOF；未完整读取的文件不算已加载。
+3. 同一工作上下文内已经完整读取、且内容与适用事实未变化的规则可以复用，无需重复读取。
 
-一项任务可能命中多行。开始实质工作前，必须打开每个命中的规则正文；本表只负责场景路由，不复制规则正文。
+一项任务可以命中多行。开始实质工作前，完整读取每个直接命中的正文；本表只负责场景路由，不复制规则正文。
 
 | 什么时候读取 | 必须打开的规则正文 |
 |---|---|
 | 新增、迁移、合并或修改长期规则时 | [规则归属与优先级](.trellis/spec/shared/rule-ownership-and-precedence.md) |
 | Mac/Windows 开工、交接、提交或同步时 | [双端 Git 协作](.trellis/spec/shared/cross-device-git.md) |
 | 仓库跟踪外部上游并长期保留本地或私有偏离时 | [上游跟踪与分叉治理](.trellis/spec/shared/upstream-fork-governance.md) |
-| 规划复杂任务、选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
+| 选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
+| 使用原生子代理以外的 Channel worker、可见交互式 runtime、浏览器/桌面执行器或其它外部 AI 控制面时 | [外部 AI 执行器生命周期](.trellis/spec/shared/external-executor-lifecycle.md) |
 | 更新 Trellis、处理跟踪/忽略或 Registry 时 | [Trellis 项目状态](.trellis/spec/shared/trellis-project-state.md) |
 | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 | [长期知识沉淀](.trellis/spec/shared/durable-knowledge.md) |
-| 调查、检索、下载、入库或整理文献、获取或生成数据与产物、测试、完成声明和最终交接时 | [证据与验证](.trellis/spec/shared/evidence-and-verification.md) |
+| 核验事实、获取或生成数据与产物、测试、完成声明和最终交接时 | [证据与验证](.trellis/spec/shared/evidence-and-verification.md) |
+| 检索、获取、发现或整理文献，或写入、分类用户级文献主库时 | [文献主库归档与分类](.trellis/spec/shared/literature-library-ingestion.md) |
 | 路径、工具、数据或行为可能因系统不同而变化时 | [跨平台验证](.trellis/spec/shared/cross-platform-validation.md) |
 | 处理日志、配置、远端系统、账号或准备 push 时 | [敏感信息](.trellis/spec/shared/sensitive-data.md) |
 | 任务会修改、创建、删除或生成任何文件时 | [工程原则与最小改动](.trellis/spec/shared/engineering-principles.md) |
-| 任何任务开始、规划、调查、执行、验证或交付时 | [安全高效工作流](.trellis/spec/shared/safe-workflow-and-efficiency.md) |
+| 任务开始、恢复或范围切换，以及规划、执行、验证或交付时 | [安全高效工作流](.trellis/spec/shared/safe-workflow-and-efficiency.md) |
 | 删除、清理、迁移、push、部署或其它外部变更前 | [权限与变更安全](.trellis/spec/shared/authority-and-change-safety.md) |
 | 编写 Mac、Windows、远端或跨 shell 命令时 | [Shell 与命令可移植性](.trellis/spec/shared/shell-and-command-portability.md) |
 | 新仓库初始化 Trellis 或同步标准 profile 时 | [新项目标准初始化](.trellis/spec/shared/new-project-bootstrap.md) |

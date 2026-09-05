@@ -21,7 +21,7 @@ Trellis Context Loading Protocol:
 - If the referenced file cannot be read, use the active-task fallback below.
 - If there is no saved-output notice and the `<!-- trellis-hook-injected -->` marker is present, the hook loaded the complete role-specific task artifacts and spec context.
 - If there is no saved-output notice and the marker is absent, use the active-task fallback below.
-- For the fallback, find `Active task: <path>` in your dispatch prompt. Read `<path>/implement.jsonl`, each file listed there, `<path>/prd.md`, `<path>/design.md` if present, and `<path>/implement.md` if present before doing the work. If the dispatch prompt has no active-task path, ask the main session; do not guess or use another session's task.
+- For the fallback, find `Active task: <path>` in your dispatch prompt. If `<path>/implement.jsonl` exists, read the manifest and every file referenced by its real entries; its absence is valid and must not create a manifest. Then read `<path>/prd.md`, optional `<path>/design.md` / `<path>/implement.md`, and the `.trellis/spec/` owners directly relevant to the work. If the dispatch prompt has no active-task path, ask the main session; do not guess or use another session's task.
 
 Rules:
 - Read before write. Follow `.trellis/spec/` guidance relevant to the task.

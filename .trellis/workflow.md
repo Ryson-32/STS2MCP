@@ -502,9 +502,9 @@ Start with the cheapest check that can falsify the change, then run the relevant
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
-The implementer performs local self-checks and fixes findings. Use a separate `trellis-check` agent when the triggers in 2.3 apply or a clean independent pass has clear value. Its prompt starts with `Active task: <task path>` and names the affected contracts, baseline and expected result. A read-only reviewer may use the shared checkout; a reviewer authorized to change production code uses an isolated worktree and does not recursively spawn implement/check.
+The implementer performs local self-checks and fixes findings. Use a separate `trellis-check` agent when the triggers in 2.3 apply or a clean independent pass has clear value. Its prompt starts with `Active task: <task path>` and names the affected contracts, baseline, expected result, and whether a specific writable scope is authorized. A shared-checkout or read-only reviewer reports findings without editing; direct fixes require explicit dispatch authorization plus the project's required worktree isolation and single-writer boundary. The reviewer does not recursively spawn implement/check.
 
-The check role reads `check.jsonl` when present plus the task artifacts, reviews against the owning specs, fixes scoped findings, and reruns the checks that cover those findings. If no independent review trigger applies, the main session can perform this affected-scope validation itself.
+The check role reads `check.jsonl` when present plus the task artifacts and owning specs. It fixes findings and reruns their checks only inside the authorized write boundary above; otherwise it returns the evidence to the main session. If no independent review trigger applies, the main session can perform this affected-scope validation itself.
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
@@ -520,7 +520,7 @@ Small/local changes do not require a whole-repository test merely because one ex
 
 - Request independent review for scientific meaning, cross-module contracts, high-impact acceptance, or unresolved uncertainty. It is also reasonable when a second perspective is cheap and likely to reveal a different failure mode.
 - Ordinary small changes may be author-checked. Independence means a separate problem formulation or clean context. A different model family is preferred when available and suitable, but it is not a qualification or completion gate.
-- Review affected contracts and evidence, not every file by default. A reviewer may repair findings in scope; if a finding changes requirements, return to Phase 1 before continuing.
+- Review affected contracts and evidence, not every file by default. A reviewer may repair a finding only when the dispatch explicitly authorizes that writable scope and project isolation requirements hold; otherwise report it. If a finding changes requirements, return to Phase 1 before continuing.
 
 #### 2.4 Rollback `[on demand]`
 

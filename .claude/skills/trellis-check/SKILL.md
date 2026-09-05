@@ -38,7 +38,7 @@ Read the specific guideline files referenced — the index is a pointer, not the
 
 ## Step 3: Run Project Checks
 
-Run the project's lint, type-check, and test commands. Fix any failures before proceeding.
+Run the project's affected lint, type-check, and test commands. An inline authoring session may fix failures within its current implementation authority. A delegated reviewer may edit only when its dispatch names an explicit writable scope and project isolation requirements hold; otherwise it reports failures without editing.
 
 ## Step 4: Review Against Checklist
 
@@ -105,7 +105,8 @@ Skip this step if your change is confined to a single layer.
 
 Report every violation you find. Then:
 
-- Mechanical and local (lint nit, missing type, wrong import, dead branch, failing assertion) → fix in place, then re-run project checks.
-- Design or judgment (naming a shared concept, moving a module boundary, changing a public interface, reassigning where behavior lives) → record the evidence and your recommendation, and stop. Do not rewrite it silently.
+- In an inline authoring session, fix mechanical and local findings only within current implementation authority.
+- In a delegated review, fix only when the dispatch explicitly authorizes the writable scope and the project-required isolation or single-writer boundary holds. Shared-checkout, read-only, and unscoped reviews report findings without editing.
+- Design or judgment findings remain report-only unless the task requirements explicitly settle them.
 
-If a fix would touch files outside the current task's scope, say so and stop instead of widening the change.
+If a fix would touch files outside the authorized scope, report it and stop instead of widening the change.

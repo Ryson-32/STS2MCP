@@ -21,13 +21,13 @@ You are already the `trellis-implement` sub-agent that the main session dispatch
 Look for the `<!-- trellis-hook-injected -->` marker in your input above.
 
 - **If the marker is present**: prd / spec / research files have already been auto-loaded for you above. Proceed with the implementation work directly.
-- **If the marker is absent**: hook injection didn't fire (Windows + Claude Code, `--continue` resume, fork distribution, hooks disabled, etc.). Find the active task path from your dispatch prompt's first line `Active task: <path>`, then Read `<task-path>/implement.jsonl`, each listed file, `<task-path>/prd.md`, `<task-path>/design.md` if present, and `<task-path>/implement.md` if present before doing the work.
+- **If the marker is absent**: hook injection didn't fire (Windows + Claude Code, `--continue` resume, fork distribution, hooks disabled, etc.). Find the active task path from your dispatch prompt's first line `Active task: <path>`. If `<task-path>/implement.jsonl` exists, read the manifest and every file referenced by its real entries; its absence is valid and must not create a manifest. Then read `<task-path>/prd.md`, optional `<task-path>/design.md` / `<task-path>/implement.md`, and the `.trellis/spec/` owners directly relevant to the work.
 
 ## Context
 
 Before implementing, read:
 - `.trellis/workflow.md` - Project workflow
-- `.trellis/spec/` - Development guidelines
+- Relevant `.trellis/spec/` owners for the files and contracts this task touches
 - Task `prd.md` - Requirements document
 - Task `design.md` - Technical design (if exists)
 - Task `implement.md` - Execution plan (if exists)

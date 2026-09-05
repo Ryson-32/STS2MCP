@@ -7,7 +7,7 @@ Injects task-specific context when sub-agents (implement, check, research) are s
 
 Core Design Philosophy:
 - Hook is responsible for injecting all context, subagent works autonomously with complete info
-- Each agent has a dedicated jsonl file defining its context
+- Implement/check may use an optional jsonl file for explicitly curated context
 - No resume needed, no segmentation, behavior controlled by code not prompt
 
 Trigger: PreToolUse (before Task tool call)
@@ -412,8 +412,8 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[dict]:
     full_path = os.path.join(base_path, jsonl_path)
     if not os.path.exists(full_path):
         print(
-            f"[inject-subagent-context] WARN: {jsonl_path} not found — "
-            f"sub-agent will receive only task artifacts",
+            f"[inject-subagent-context] INFO: optional {jsonl_path} is absent — "
+            f"continuing with task artifacts and relevant specs",
             file=sys.stderr,
         )
         return []
@@ -449,9 +449,8 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[dict]:
 
     if not saw_real_entry:
         print(
-            f"[inject-subagent-context] WARN: {jsonl_path} has no curated "
-            f"entries (only seed / empty) — sub-agent will receive only "
-            f"task artifacts. See workflow.md planning artifact guidance.",
+            f"[inject-subagent-context] INFO: optional {jsonl_path} has no real "
+            f"entries — continuing with task artifacts and relevant specs",
             file=sys.stderr,
         )
 
@@ -489,7 +488,7 @@ def get_agent_context(
 ) -> str:
     """
     Get context from {agent_type}.jsonl for the specified agent.
-    Only reads implement.jsonl or check.jsonl (the two JSONL files the task system creates).
+    Reads implement.jsonl or check.jsonl only when that optional manifest exists.
     """
     agent_jsonl = f"{task_dir}/{agent_type}.jsonl"
     blocks = _materialize_jsonl_entries(repo_root, agent_jsonl, limits, budget)
@@ -499,10 +498,10 @@ def get_agent_context(
         # the prompt itself so the sub-agent compensates instead of assuming
         # the spec context was complete.
         return (
-            f"[Trellis] {agent_jsonl} has no curated entries, so no spec/research "
-            "context was injected. Before working, read the guidelines relevant "
-            "to the code you will touch under .trellis/spec/, and treat the task "
-            "artifacts below as the only prepared context."
+            f"[Trellis] Optional {agent_jsonl} is absent or has no real entries. "
+            "Continue with the task artifacts below and read the .trellis/spec/ "
+            "owners directly relevant to the files and contracts you will touch. "
+            "Do not create a manifest merely because it is absent."
         )
     return "\n\n".join(blocks)
 
@@ -655,7 +654,7 @@ You are the Implement Agent in the Multi-Agent Pipeline.
 
 ## Your Context
 
-All the information you need has been prepared for you:
+Task artifacts and any explicitly curated optional context are prepared below:
 
 {context}
 
@@ -669,7 +668,7 @@ All the information you need has been prepared for you:
 
 ## Workflow
 
-1. **Understand specs** - All dev specs are injected above, understand them
+1. **Understand specs** - Use injected entries when present; otherwise read the directly relevant spec owners before editing
     2. **Understand task artifacts** - Read requirements, technical design if present, and execution plan if present
     3. **Implement feature** - Implement following specs and task artifacts
 4. **Self-check** - Ensure code quality against check specs
@@ -677,7 +676,7 @@ All the information you need has been prepared for you:
 ## Important Constraints
 
 - Do NOT execute git commit, only code modifications
-- Follow all dev specs injected above
+- Follow injected context and the directly relevant project specs
 - Report list of modified/created files when done"""
 
 
@@ -690,7 +689,7 @@ You are the Check Agent in the Multi-Agent Pipeline (code and cross-layer checke
 
 ## Your Context
 
-All check specs and dev specs you need:
+Task artifacts and any explicitly curated optional review context:
 
 {context}
 
@@ -706,13 +705,14 @@ All check specs and dev specs you need:
 
 1. **Get changes** - Run `git diff --name-only` and `git diff` to get code changes
 2. **Check against specs** - Check item by item against specs above
-3. **Self-fix** - Fix issues directly, don't just report
+3. **Fix or report within authority** - Edit only when the dispatch explicitly authorizes the writable scope and project isolation rules hold; otherwise report findings
 4. **Run verification** - Run project's lint and typecheck commands
 
 ## Important Constraints
 
-- Fix issues yourself, don't just report
-- Must execute complete checklist in check specs
+- Write/edit tools do not grant authority; shared-checkout, read-only, and unscoped reviews report findings without editing
+- Direct fixes require explicit dispatch write scope plus the project-required worktree isolation and single-writer boundary
+- Execute the checklist relevant to the affected contracts
 - Pay special attention to impact radius analysis (L1-L5)"""
 
 
