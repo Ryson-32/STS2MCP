@@ -504,7 +504,7 @@ Start with the cheapest check that can falsify the change, then run the relevant
 
 The implementer performs local self-checks and fixes findings. Use a separate `trellis-check` agent when the triggers in 2.3 apply or a clean independent pass has clear value. Its prompt starts with `Active task: <task path>` and names the affected contracts, baseline, expected result, and whether a specific writable scope is authorized. A shared-checkout or read-only reviewer reports findings without editing; direct fixes require explicit dispatch authorization plus the project's required worktree isolation and single-writer boundary. The reviewer does not recursively spawn implement/check.
 
-The check role reads `check.jsonl` when present plus the task artifacts and owning specs. It fixes findings and reruns their checks only inside the authorized write boundary above; otherwise it returns the evidence to the main session. If no independent review trigger applies, the main session can perform this affected-scope validation itself.
+The check role reads `check.jsonl` when present plus the task artifacts and owning specs. It fixes findings and reruns their checks only inside the authorized write boundary above; otherwise it returns the evidence to the main session.
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
