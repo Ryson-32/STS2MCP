@@ -36,13 +36,13 @@
 | `gpt-6-astra` | `low` | 常规档；目标明确的实现、检索、整理和简单检查 |
 | `gpt-6-astra` | `medium` | 默认通用档；普通探索、跨文件分析和难以可靠归类的工作 |
 | `gpt-6-astra` | `high` | 复杂本地工作、关键逻辑与高价值复核；Astra 自动选档上限 |
-| `claude-fable-5[1m]` | `xhigh` | 选择 Fable 5 时的默认首选；适合重要 UI/文案优化、复杂问题探索、独立复核和高价值验证 |
-| `claude-fable-5[1m]` | `max` | Fable xhigh 已实际返回、且结果显示深度不足时再升级 |
+| `claude-fable-5-1[1m]` | `xhigh` | 选择 Fable 5.1 时的默认首选；适合重要 UI/文案优化、复杂问题探索、独立复核和高价值验证 |
+| `claude-fable-5-1[1m]` | `max` | Fable xhigh 已实际返回、且结果显示深度不足时再升级 |
 | `claude-opus-5[1m]` | `xhigh` | 选择 Opus 5 时的默认首选；适合约束明确的编码、前端、重构和普通文案，也适合并行拆分 |
 
 - 模型 ID 与 effort 是独立字段；不得拼成伪模型 ID。`[1m]` 是当前 Claude provider 模型 ID 的上下文限定符，不是 effort。调用面没有独立 effort 通道时，只传真实模型 ID，并把 effort 视为未应用或不可观测。
-- 已经选择 Fable 5 时，按 `claude-fable-5[1m]` → `claude-fable-5` 尝试；已经选择 Opus 5 时，按 `claude-opus-5[1m]` → `claude-opus-5` 尝试。只有同一家族的 1M 候选被当前调用面或 provider 明确拒绝、不可用或无法返回时，才使用该家族不带上下文限定符的候选；1M 候选无效本身不授权切换模型家族。每次尝试仍须分别记录 requested 与 observed；静默降级或跨模型重映射不算请求候选已实际返回。
-- 无法可靠归类时选择 `gpt-6-astra` + `medium`。Astra 自动选择限于 low、medium、high；更高 effort 只在用户明确要求时使用。GPT-5.6 不再作为当前默认、回退或新示例。需要 Claude 时按任务选择 Fable 5 或 Opus 5，再遵循对应的家族内回退顺序。
+- 已经选择 Fable 5.1 时，按 `claude-fable-5-1[1m]` → `claude-fable-5-1` 尝试；已经选择 Opus 5 时，按 `claude-opus-5[1m]` → `claude-opus-5` 尝试。只有同一家族的 1M 候选被当前调用面或 provider 明确拒绝、不可用或无法返回时，才使用该家族不带上下文限定符的候选；1M 候选无效本身不授权切换模型家族。每次尝试仍须分别记录 requested 与 observed；静默降级或跨模型重映射不算请求候选已实际返回。
+- 无法可靠归类时选择 `gpt-6-astra` + `medium`。Astra 自动选择限于 low、medium、high；更高 effort 只在用户明确要求时使用。GPT-5.6 不再作为当前默认、回退或新示例。需要 Claude 时按任务选择 Fable 5.1 或 Opus 5，再遵循对应的家族内回退顺序。
 - 深推理、关键不确定性或独立复核有新增价值时，尽早并行使用网页 Pro；提示写清问题、必要背景和可访问材料，保持简明开放。Pro 不可用时继续独立本地工作并报告缺口，不恢复旧模型或自动提高 effort。GitHub、项目文件或附件均可按任务选用，不要求先 push；材料外发范围与授权由各项目管理，本规则不授予跨项目上传权限。
 - 高价值 `check` 优先考虑与实现者不同的模型家族，以增加独立视角；这是偏好而非强制。当前模型不可用、项目禁用、成本不合适或干净上下文已能提供独立性时，可以使用同一模型家族。
 - Fable 通常先用 xhigh，只有实际结果不足时才考虑 max；不为这个升级建立证据文件、task ID、ledger 或失败关闭流程。
