@@ -428,8 +428,9 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next-Action: Classify first. Continue inline for small/read-only work; create a task "
-            "directly when complex work benefits from persistence. Do not ask only for task-creation consent."
+            "Next-Action: Classify the current turn before creating any Trellis task. "
+            "Simple conversation or a small clear edit needs no task ritual. "
+            "Create a task when durable planning or coordination helps within the authorized scope."
         )
 
     task_ref = active.task_path
@@ -490,15 +491,19 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
             if not exists
         ]
         next_bits: list[str] = []
-        next_bits.append(
-            "A concise PRD may stand alone; add design or implementation notes only when they improve "
-            "decisions, coordination, validation, handoff, or recovery. If current implementation "
-            "authorization covers the final scope, run `task.py start` without a formal second approval"
-        )
+        if missing_complex:
+            next_bits.append(
+                "PRD-only can be sufficient; "
+                f"add optional {', '.join(missing_complex)} only when useful"
+            )
+        else:
+            next_bits.append("Planning artifacts are present; preserve existing authorization and resolve blocking decisions before `task.py start`")
+        if not jsonl_ready:
+            next_bits.append("optional JSONL has no curated entries; load task artifacts/specs directly or curate useful references")
         return (
             f"Status: PLANNING\nTask: {task_title}\n"
             f"Present: {present_line}\n"
-            f"Next-Action: {'; '.join(next_bits)}."
+            f"Next-Action: {'; '.join(next_bits)}. Continue when the work is clear and authorized; ask only for unresolved user decisions."
         )
 
     return (

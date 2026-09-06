@@ -605,7 +605,10 @@ def _relative_task_ref(task_path: str, repo_root: Path) -> str:
         return ""
     candidate = Path(normalized)
     if not candidate.is_absolute():
-        return normalized
+        resolved_ref = resolve_task_ref(normalized, repo_root)
+        if resolved_ref is None:
+            return ""
+        candidate = resolved_ref
     try:
         resolved = candidate.resolve()
         root = repo_root.resolve()
@@ -782,7 +785,8 @@ def clear_active_task(
 
 def clear_task_from_sessions(task_path: str, repo_root: Path) -> int:
     """Delete all session runtime files that point at a task."""
-    target = _canonical_task_ref(task_path, repo_root) or normalize_task_ref(task_path)
+    # Archive clears after the move succeeds; the original path can be absent.
+    target = _canonical_task_ref(task_path, repo_root) or _relative_task_ref(task_path, repo_root)
     if not target:
         return 0
 
@@ -796,7 +800,7 @@ def clear_task_from_sessions(task_path: str, repo_root: Path) -> int:
         current = _string_value(context.get("current_task"))
         if not current:
             continue
-        current_ref = _canonical_task_ref(current, repo_root) or normalize_task_ref(current)
+        current_ref = _canonical_task_ref(current, repo_root) or _relative_task_ref(current, repo_root)
         if current_ref != target:
             continue
         if session_path.is_file() and _remove_file(session_path):

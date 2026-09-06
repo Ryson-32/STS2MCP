@@ -28,7 +28,7 @@ custom agent's ``hooks.userPromptSubmit`` and the IDE ``.kiro.hook``
 (Kiro adds hook stdout directly to the conversation context).
 
 Silent exit 0 case (no output):
-  - No .trellis/ directory found (not a Trellis project)
+  - No Trellis project markers found (user-level channel storage is not a project)
 
 When a session points at a task directory whose task.json is missing, malformed,
 or missing a usable status, the hook emits a task_error breadcrumb instead of
@@ -81,14 +81,18 @@ If you have not already loaded Trellis context this session, read the `trellis-s
 # ---------------------------------------------------------------------------
 
 def find_trellis_root(start: Path) -> Optional[Path]:
-    """Walk up from start to find directory containing .trellis/.
+    """Walk up from start to find a Trellis project.
 
     Handles CWD drift: subdirectory launches, monorepo packages, etc.
-    Returns None if no .trellis/ found (silent no-op).
+    A scripts directory or workflow file distinguishes projects from user-level
+    .trellis/channels storage. Either marker suffices so missing workflow text
+    still gets its generic breadcrumb and broken project imports stay visible.
+    Returns None if no project is found (silent no-op).
     """
     cur = start.resolve()
     while cur != cur.parent:
-        if (cur / ".trellis").is_dir():
+        trellis = cur / ".trellis"
+        if (trellis / "scripts").is_dir() or (trellis / "workflow.md").is_file():
             return cur
         cur = cur.parent
     return None

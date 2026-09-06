@@ -44,6 +44,10 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 什么时候读取 | 必须打开的规则正文 |
 |---|---|
 | 新增、迁移、合并或修改长期规则时 | [规则归属与优先级](.trellis/spec/shared/rule-ownership-and-precedence.md) |
+| 起草、修改或审查面向读者的中英文说明、文档和沟通时 | [通用语言表达](.trellis/spec/shared/language-general.md) |
+| 项目声明适用科研语言规则，且起草、翻译或审查科研文类时 | [科研语言表达](.trellis/spec/shared/language-research.md) |
+| 项目声明采用 FCI 语言规则，且处理燃料—冷却剂相互作用术语时 | [FCI 概念与双语术语](.trellis/spec/shared/language-fci.md) |
+| 项目明确采用此作者语气，且进行学术起草、润色或语气校准时 | [作者学术语气](.trellis/spec/shared/language-author-academic.md) |
 | Mac/Windows 开工、交接、提交或同步时 | [双端 Git 协作](.trellis/spec/shared/cross-device-git.md) |
 | 仓库跟踪外部上游并长期保留本地或私有偏离时 | [上游跟踪与分叉治理](.trellis/spec/shared/upstream-fork-governance.md) |
 | 选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |

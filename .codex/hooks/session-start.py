@@ -232,8 +232,8 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next: Classify first. Continue inline for small/read-only work; create a task "
-            "directly when complex work benefits from persistence. Do not ask only for task-creation consent."
+            "Next: Classify the current turn and preserve existing authorization "
+            "before creating any Trellis task."
         )
 
     task_ref = active.task_path
@@ -280,14 +280,11 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
 
     if task_status == "planning":
         if has_design and has_implement:
-            next_action = (
-                "If current implementation authorization covers the final scope, run `task.py start` "
-                "without a formal second approval; otherwise ask only for the unresolved decision."
-            )
+            next_action = "Review planning artifacts and resolve blocking decisions before `task.py start`; preserve existing authorization."
         else:
             next_action = (
-                "A concise PRD may stand alone; add design.md or implement.md only when they "
-                "materially improve decisions, coordination, validation, handoff, or recovery."
+                "PRD-only can be sufficient; "
+                "add optional design.md and implement.md only when useful. Preserve existing authorization before `task.py start`."
             )
         return (
             f"Status: PLANNING\nTask: {task_title}\nPresent: {present_line}\n"

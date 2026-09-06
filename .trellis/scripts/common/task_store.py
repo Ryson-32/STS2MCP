@@ -18,8 +18,16 @@ Provides:
 from __future__ import annotations
 
 import argparse
+import copy
+import functools
+import hashlib
+import inspect
+import os
 import re
 import sys
+import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -63,11 +71,72 @@ from .safe_commit import (
 from .task_utils import (
     archive_destination_for,
     archive_task_complete,
-    find_task_by_name,
     is_within_tasks_dir,
     resolve_task_dir,
     run_task_hooks,
 )
+from .task_relations import TaskRelations
+
+
+_store_thread_lock = threading.RLock()
+_store_lock_depth: dict[str, int] = {}
+
+
+def _serialized_task_write(command):
+    """Serialize cooperating writers from graph reads through the final write.
+
+    OS locks release on process exit. The stable temp file is deliberately not
+    deleted (unlinking a held lock can split writers across different inodes).
+    External editors and query snapshots do not participate in this protocol.
+    """
+    signature = inspect.signature(command)
+    @functools.wraps(command)
+    def locked(*args, **kwargs):
+        # Helpers may receive a repo explicitly, while CLI commands resolve cwd.
+        # Bind before locking so direct helper calls join the same store lock.
+        repo_root = signature.bind(*args, **kwargs).arguments.get("repo_root")
+        key = os.path.normcase(str(get_tasks_dir(repo_root or get_repo_root()).resolve()))
+        with _store_thread_lock:
+            if _store_lock_depth.get(key, 0):
+                return command(*args, **kwargs)
+            name = hashlib.sha256(key.encode("utf-8")).hexdigest()
+            try:
+                with (Path(tempfile.gettempdir()) / f"trellis-task-store-{name}.lock").open("a+b") as handle:
+                    if handle.tell() == 0:
+                        handle.write(b"\0")
+                        handle.flush()
+                    deadline = time.monotonic() + 10
+                    while True:
+                        try:
+                            handle.seek(0)
+                            if os.name == "nt":
+                                import msvcrt
+                                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                            else:
+                                import fcntl
+                                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except OSError:
+                            if time.monotonic() >= deadline:
+                                print("Error: task store is busy; no task changes were made. Retry after the other writer finishes.", file=sys.stderr)
+                                return 1
+                            time.sleep(0.05)
+                    _store_lock_depth[key] = 1
+                    try:
+                        return command(*args, **kwargs)
+                    finally:
+                        _store_lock_depth.pop(key, None)
+                        handle.seek(0)
+                        if os.name == "nt":
+                            import msvcrt
+                            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                        else:
+                            import fcntl
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError as exc:
+                print(f"Error: task store write failed: {exc}", file=sys.stderr)
+                return 1
+    return locked
 
 
 # =============================================================================
@@ -182,7 +251,8 @@ def _ensure_children_list(data: dict) -> list:
     children = data.get("children")
     if not isinstance(children, list):
         children = []
-        data["children"] = children
+    children = list(dict.fromkeys(c for c in children if isinstance(c, str)))
+    data["children"] = children
     return children
 
 
@@ -284,7 +354,7 @@ def _default_prd_content(title: str, description: str | None = None) -> str:
 
 - Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
 - Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- Add `design.md` or `implement.md` only when separate design or execution detail helps; sufficient PRD-only planning is valid.
 """
 
 
@@ -292,6 +362,7 @@ def _default_prd_content(title: str, description: str | None = None) -> str:
 # Command: create
 # =============================================================================
 
+@_serialized_task_write
 def cmd_create(args: argparse.Namespace) -> int:
     """Create a new task."""
     repo_root = get_repo_root()
@@ -541,43 +612,15 @@ def cmd_create(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
 
-    # JSONL context manifests are intentionally on demand. The first
-    # add-context call creates the selected file; small and self-contained
-    # tasks should not carry placeholder manifests.
-    created_jsonl = False
+    # Context manifests are optional and created on demand by add-context.
+    # Never create empty scaffolding solely because a platform supports agents.
 
-    # Establish the bidirectional link. Both sides were validated above, so a
-    # failure here is a write failure, not a bad argument.
-    if parent_dir is not None and parent_data is not None:
-        parent_json_path = parent_dir / FILE_TASK_JSON
-
-        # Add child to parent's children list
-        parent_children = _ensure_children_list(parent_data)
-        if dir_name not in parent_children:
-            parent_children.append(dir_name)
-            parent_data["children"] = parent_children
-            if not write_json(parent_json_path, parent_data):
-                _report_write_failure(parent_json_path)
-                print(
-                    f"The task exists at {_repo_relative_path(task_dir, repo_root)} but is NOT "
-                    f"linked to {parent_dir.name}. Re-link with: task.py add-subtask "
-                    f"{parent_dir.name} {dir_name}",
-                    file=sys.stderr,
-                )
-                return 1
-
-        # Set parent in child's task.json
-        task_data["parent"] = parent_dir.name
-        if not write_json(task_json_path, task_data):
-            _report_write_failure(task_json_path)
-            print(
-                f"Link is half-written: {parent_dir.name} now lists '{dir_name}' as a child, "
-                f"but the new task does not record its parent.",
-                file=sys.stderr,
-            )
+    # Use the same validated, retryable two-sided writer as existing tasks.
+    if parent_dir is not None:
+        link_args = argparse.Namespace(parent_dir=str(parent_dir), child_dir=str(task_dir))
+        if cmd_add_subtask(link_args):
+            print(f"Task created but unlinked: {task_dir}. Retry task.py add-subtask.", file=sys.stderr)
             return 1
-
-        print(colored(f"Linked as child of: {parent_dir.name}", Colors.GREEN), file=sys.stderr)
 
     # Auto-activate the new task so the per-turn breadcrumb fires planning
     # state. Best-effort: gracefully degrade if no session identity (CLI run
@@ -641,11 +684,11 @@ def cmd_create(args: argparse.Namespace) -> int:
     print(colored("Next steps:", Colors.BLUE), file=sys.stderr)
     print("  - Fill prd.md with requirements and acceptance criteria", file=sys.stderr)
     print("  - Lightweight task: PRD-only is valid", file=sys.stderr)
-    print("  - Complex task: add design.md and implement.md before task.py start", file=sys.stderr)
-    if created_jsonl:
+    print("  - Add design.md or implement.md only when separate detail helps", file=sys.stderr)
+    if _has_subagent_platform(repo_root):
         print(
-            "  - Curate implement.jsonl / check.jsonl (created empty) as spec/research "
-            "manifests before task.py start when sub-agents need context:",
+            "  - Curate implement.jsonl / check.jsonl on demand with task.py add-context "
+            "when sub-agents need spec/research context:",
             file=sys.stderr,
         )
         print(
@@ -990,6 +1033,7 @@ def _apply_rename(plan: _RenamePlan, repo_root: Path) -> int:
     return 0
 
 
+@_serialized_task_write
 def cmd_rename(args: argparse.Namespace) -> int:
     """Rename a task and every reference to it."""
     repo_root = get_repo_root()
@@ -1210,6 +1254,7 @@ def _validate_branch_metadata(
     return True
 
 
+@_serialized_task_write
 def cmd_archive(args: argparse.Namespace) -> int:
     """Archive completed task."""
     repo_root = get_repo_root()
@@ -1254,8 +1299,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
     # Check the destination before anything below mutates task state. The
     # mover refuses a collision too, but by then this command has already
-    # marked the task completed, re-parented its children and cleared the
-    # sessions pointing at it — all of which would have to be undone by hand.
+    # marked the task completed, which would have to be undone on failure.
     planned_archive_dest = archive_destination_for(task_dir)
     if planned_archive_dest.exists():
         print(colored(
@@ -1272,9 +1316,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
     # Update status before archiving
     today = datetime.now().strftime("%Y-%m-%d")
-    # Names of child task dirs whose task.json gets modified below; passed
-    # into safe_archive_paths_to_add so they're staged in this commit.
-    modified_children: list[str] = []
+    before_archive: dict | None = None
+    archive_data: dict | None = None
     if task_json_path.is_file():
         data, read_reason = read_json_checked(task_json_path)
         if data is None:
@@ -1304,8 +1347,10 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 )
                 return 1
 
+            before_archive = copy.deepcopy(data)
             data["status"] = "completed"
             data["completedAt"] = today
+            archive_data = data
             if not write_json(task_json_path, data):
                 _report_write_failure(task_json_path)
                 print(
@@ -1316,52 +1361,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 )
                 return 1
 
-            # Handle subtask relationships on archive.
-            # Keep this task in its parent's children list so progress
-            # counters (children_progress) stay consistent — children
-            # missing from the active set are treated as completed.
-            task_children = data.get("children", [])
-
-            # If this is a parent, clear parent field in all children
-            if task_children:
-                for child_name in task_children:
-                    child_dir_path = find_task_by_name(child_name, tasks_dir)
-                    if child_dir_path:
-                        child_json = child_dir_path / FILE_TASK_JSON
-                        if child_json.is_file():
-                            child_data, child_reason = read_json_checked(child_json)
-                            if child_data is None:
-                                problem, _ = describe_json_read_failure(child_json, child_reason)
-                                print(
-                                    colored(
-                                        f"Warning: {problem}; child '{child_dir_path.name}' "
-                                        "keeps its parent reference.",
-                                        Colors.YELLOW,
-                                    ),
-                                    file=sys.stderr,
-                                )
-                                continue
-                            child_data["parent"] = None
-                            if not write_json(child_json, child_data):
-                                # Stop before the move: a child pointing at a
-                                # parent that has left .trellis/tasks/ is a
-                                # dangling reference nothing repairs later.
-                                # Retrying is safe — every step so far is
-                                # idempotent.
-                                _report_write_failure(child_json)
-                                print(
-                                    f"Not archived: {_repo_relative_path(task_dir, repo_root)} is "
-                                    f"marked completed but stays in place because child "
-                                    f"'{child_dir_path.name}' could not be unlinked. "
-                                    "Fix the child, then run archive again.",
-                                    file=sys.stderr,
-                                )
-                                return 1
-                            modified_children.append(child_dir_path.name)
-
-    # Clear any session that still points at this task before the path moves.
-    from .active_task import clear_task_from_sessions
-    clear_task_from_sessions(str(task_dir), repo_root)
+            # Preserve both historical relationship directions. Readers resolve
+            # archived tasks explicitly; archive is not an unlink operation.
 
     # Archive
     result = archive_task_complete(
@@ -1370,6 +1371,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
         archive_destination=planned_archive_dest,
     )
     if "archived_to" in result:
+        # A failed move must leave session pointers usable at the original path.
+        from .active_task import clear_task_from_sessions
+        clear_task_from_sessions(str(task_dir), repo_root)
         archive_dest = Path(result["archived_to"])
         year_month = archive_dest.parent.name
         print(colored(f"Archived: {dir_name} -> archive/{year_month}/", Colors.GREEN), file=sys.stderr)
@@ -1379,7 +1383,6 @@ def cmd_archive(args: argparse.Namespace) -> int:
             if not _auto_commit_archive(
                 dir_name,
                 repo_root,
-                modified_children,
                 archive_destination=archive_dest,
             ):
                 print(
@@ -1400,6 +1403,12 @@ def cmd_archive(args: argparse.Namespace) -> int:
         run_task_hooks("after_archive", archived_json, repo_root)
         return 0
 
+    if before_archive is not None:
+        latest, _ = read_json_checked(task_json_path)
+        if latest == archive_data and write_json(task_json_path, before_archive):
+            print("Archive move failed; restored task metadata and preserved session pointers.", file=sys.stderr)
+        else:
+            print(f"Archive move failed; metadata changed or rollback failed: {task_json_path}. Inspect before retry.", file=sys.stderr)
     return 1
 
 
@@ -1573,6 +1582,68 @@ def _print_index_lock_warning(
 # Command: add-subtask
 # =============================================================================
 
+def _validate_subtask_link(graph: TaskRelations, parent: str, child: str) -> bool:
+    """Reject cycles and competing parents before either side is written."""
+    if parent == child:
+        print("Error: a task cannot be its own parent", file=sys.stderr)
+        return False
+    for key in (parent, child):
+        if "/" not in key and len(graph.resolve(key)) != 1:
+            print(f"Error: ambiguous task identity: {key}; resolve duplicate task directory names before linking.", file=sys.stderr)
+            return False
+    if graph.scan_issues:
+        print("Error: task metadata scan is incomplete; inspect scan issues before linking", file=sys.stderr)
+        return False
+    for edge in graph.edges:
+        if edge["kind"] in ("parent", "children", "subtasks") and edge["state"] == "ambiguous":
+            if edge["source"] in (parent, child) or set(edge["targets"]).intersection((parent, child)):
+                print(f"Error: ambiguous hierarchy reference: {edge['evidence']}: {edge['reference']}", file=sys.stderr)
+                return False
+    hierarchy = graph.hierarchy()
+    for owner, children in hierarchy.items():
+        if child in children and owner != parent:
+            print(f"Error: Child task already has a parent reference: {owner}. Remove that link before reparenting.", file=sys.stderr)
+            return False
+    pending, seen = [child], set()
+    while pending:
+        current = pending.pop()
+        if current == parent:
+            print("Error: link would create a hierarchy cycle", file=sys.stderr)
+            return False
+        if current not in seen:
+            seen.add(current)
+            pending.extend(hierarchy.get(current, ()))
+    return True
+
+
+def _write_relationship_pair(updates: list[tuple[Path, dict, dict]]) -> bool:
+    """Check preimages; on failure roll back only our unchanged earlier writes.
+
+    Atomic per file, not a filesystem transaction: arbitrary external editors
+    can still race the final compare/write window. Never overwrite detected drift.
+    """
+    for path, before, _ in updates:
+        current, _ = read_json_checked(path)
+        if current != before:
+            print(f"Error: relationship metadata changed before write: {path}", file=sys.stderr)
+            return False
+    applied: list[tuple[Path, dict, dict]] = []
+    for path, before, after in updates:
+        current, _ = read_json_checked(path)
+        if current != before or not write_json(path, after):
+            print(f"Error: Failed to write relationship task.json (write failure or changed preimage): {path}", file=sys.stderr)
+            for previous, original, written in reversed(applied):
+                latest, _ = read_json_checked(previous)
+                if latest == written and write_json(previous, original):
+                    print(f"Rolled back relationship: {previous}", file=sys.stderr)
+                else:
+                    print(f"[!] Partial relationship retained; rollback refused/failed: {previous}. Inspect both task.json files before retry.", file=sys.stderr)
+            return False
+        applied.append((path, before, after))
+    return True
+
+
+@_serialized_task_write
 def cmd_add_subtask(args: argparse.Namespace) -> int:
     """Link a child task to a parent task."""
     repo_root = get_repo_root()
@@ -1610,36 +1681,33 @@ def cmd_add_subtask(args: argparse.Namespace) -> int:
         _report_read_failure(child_json_path, child_reason)
         return 1
 
-    # Check if child already has a parent
+    graph = TaskRelations(get_tasks_dir(repo_root), read_plans=False)
+    parent_key = parent_dir.relative_to(get_tasks_dir(repo_root)).as_posix()
+    child_key = child_dir.relative_to(get_tasks_dir(repo_root)).as_posix()
+    if not _validate_subtask_link(graph, parent_key, child_key):
+        return 1
+
+    # Repeating the same explicit link repairs a half-written pair.
     existing_parent = child_data.get("parent")
-    if existing_parent:
+    if existing_parent and (not isinstance(existing_parent, str) or graph.resolve(existing_parent) != [parent_key]):
         print(colored(f"Error: Child task already has a parent: {existing_parent}", Colors.RED), file=sys.stderr)
         return 1
 
+    parent_before, child_before = copy.deepcopy(parent_data), copy.deepcopy(child_data)
     # Add child to parent's children list
     parent_children = _ensure_children_list(parent_data)
-    child_dir_name = child_dir.name
-    if child_dir_name not in parent_children:
-        parent_children.append(child_dir_name)
-        parent_data["children"] = parent_children
+    child_dir_name = child_key
+    parent_children = [ref for ref in parent_children if graph.resolve(ref) != [child_key]]
+    parent_children.append(child_dir_name)
+    parent_data["children"] = parent_children
 
     # Set parent in child's task.json
-    child_data["parent"] = parent_dir.name
+    child_data["parent"] = parent_key
 
-    # Write both. A link is two files; if the second write fails silently the
-    # two sides disagree with no error, so check each and name the side that
-    # did land so the user knows what to undo.
-    if not write_json(parent_json_path, parent_data):
-        print(colored(f"Error: Failed to write parent task.json: {parent_json_path}", Colors.RED), file=sys.stderr)
-        print("No link was written.", file=sys.stderr)
-        return 1
-    if not write_json(child_json_path, child_data):
-        print(colored(f"Error: Failed to write child task.json: {child_json_path}", Colors.RED), file=sys.stderr)
-        print(
-            f"Link is half-written: {parent_json_path} now lists "
-            f"'{child_dir.name}' as a child, but the child does not record the parent.",
-            file=sys.stderr,
-        )
+    if not _write_relationship_pair([
+        (parent_json_path, parent_before, parent_data),
+        (child_json_path, child_before, child_data),
+    ]):
         return 1
 
     print(colored(f"Linked: {child_dir.name} -> {parent_dir.name}", Colors.GREEN), file=sys.stderr)
@@ -1650,6 +1718,7 @@ def cmd_add_subtask(args: argparse.Namespace) -> int:
 # Command: remove-subtask
 # =============================================================================
 
+@_serialized_task_write
 def cmd_remove_subtask(args: argparse.Namespace) -> int:
     """Unlink a child task from a parent task."""
     repo_root = get_repo_root()
@@ -1687,29 +1756,32 @@ def cmd_remove_subtask(args: argparse.Namespace) -> int:
         _report_read_failure(child_json_path, child_reason)
         return 1
 
-    # Remove child from parent's children list
-    parent_children = _ensure_children_list(parent_data)
-    child_dir_name = child_dir.name
-    if child_dir_name in parent_children:
-        parent_children.remove(child_dir_name)
-        parent_data["children"] = parent_children
+    parent_before, child_before = copy.deepcopy(parent_data), copy.deepcopy(child_data)
+    graph = TaskRelations(get_tasks_dir(repo_root), read_plans=False)
+    # Remove aliases of this exact record, never an ambiguous reference.
+    child_dir_name = child_dir.relative_to(get_tasks_dir(repo_root)).as_posix()
+    for field in ("children", "subtasks"):
+        if field not in parent_data:
+            continue
+        references = _ensure_children_list(parent_data) if field == "children" else parent_data[field]
+        if not isinstance(references, list) or any(not isinstance(ref, str) for ref in references):
+            print(f"Error: invalid {field}; inspect it before unlinking", file=sys.stderr)
+            return 1
+        if any(child_dir_name in graph.resolve(ref) and len(graph.resolve(ref)) > 1 for ref in references):
+            print("Error: ambiguous child reference; resolve it before unlinking", file=sys.stderr)
+            return 1
+        parent_data[field] = list(dict.fromkeys(ref for ref in references if graph.resolve(ref) != [child_dir_name]))
 
-    # Clear parent in child's task.json
-    child_data["parent"] = None
+    # Removing a stale reverse reference must not erase a different parent.
+    parent_key = parent_dir.relative_to(get_tasks_dir(repo_root)).as_posix()
+    existing_parent = child_data.get("parent")
+    if isinstance(existing_parent, str) and graph.resolve(existing_parent) == [parent_key]:
+        child_data["parent"] = None
 
-    # Write both — see cmd_add_subtask: an unchecked second write leaves the
-    # two sides disagreeing with no error.
-    if not write_json(parent_json_path, parent_data):
-        print(colored(f"Error: Failed to write parent task.json: {parent_json_path}", Colors.RED), file=sys.stderr)
-        print("Nothing was unlinked.", file=sys.stderr)
-        return 1
-    if not write_json(child_json_path, child_data):
-        print(colored(f"Error: Failed to write child task.json: {child_json_path}", Colors.RED), file=sys.stderr)
-        print(
-            f"Unlink is half-written: {parent_json_path} no longer lists "
-            f"'{child_dir.name}', but the child still records the parent.",
-            file=sys.stderr,
-        )
+    if not _write_relationship_pair([
+        (parent_json_path, parent_before, parent_data),
+        (child_json_path, child_before, child_data),
+    ]):
         return 1
 
     print(colored(f"Unlinked: {child_dir.name} from {parent_dir.name}", Colors.GREEN), file=sys.stderr)
@@ -1720,6 +1792,7 @@ def cmd_remove_subtask(args: argparse.Namespace) -> int:
 # Command: set-branch
 # =============================================================================
 
+@_serialized_task_write
 def cmd_set_branch(args: argparse.Namespace) -> int:
     """Set git branch for task."""
     repo_root = get_repo_root()
@@ -1762,6 +1835,7 @@ def cmd_set_branch(args: argparse.Namespace) -> int:
 # Command: set-base-branch
 # =============================================================================
 
+@_serialized_task_write
 def cmd_set_base_branch(args: argparse.Namespace) -> int:
     """Set the base branch (PR target) for task."""
     repo_root = get_repo_root()
@@ -1808,6 +1882,7 @@ def cmd_set_base_branch(args: argparse.Namespace) -> int:
 # Command: set-scope
 # =============================================================================
 
+@_serialized_task_write
 def cmd_set_scope(args: argparse.Namespace) -> int:
     """Set scope for PR title."""
     repo_root = get_repo_root()
@@ -1850,6 +1925,7 @@ def cmd_set_scope(args: argparse.Namespace) -> int:
 # Command: set-meta
 # =============================================================================
 
+@_serialized_task_write
 def cmd_set_meta(args: argparse.Namespace) -> int:
     """Set/overwrite one metadata key on an existing task."""
     repo_root = get_repo_root()

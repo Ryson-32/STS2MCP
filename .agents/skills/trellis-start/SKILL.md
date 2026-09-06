@@ -1,16 +1,16 @@
 ---
 name: trellis-start
-description: "Initializes an AI development session by reading workflow guides, developer identity, git status, active tasks, and project guidelines from .trellis/. Classifies incoming tasks and routes to brainstorm, direct edit, or task workflow. Use when beginning a new coding session, resuming work, starting a new task, or re-establishing project context."
+description: "Load missing Trellis project context when starting a development session. Reuse context already loaded by hooks or the current session; use continue to resume an existing task."
 ---
 
 # Start Session
 
-Initialize a Trellis-managed development session. This platform has no session-start hook, so manually load the equivalent compact context by following these steps.
+Load missing project context at the start of a Trellis development session. Reuse context already loaded by a hook or earlier in the session.
 
 ---
 
 ## Step 1: Current state
-Identity, git status, current task, active tasks, journal location.
+Identity, git status, current task and immediate relations, journal location. The relation scan includes reverse references; missing and ambiguous links remain visible.
 
 ```bash
 python ./.trellis/scripts/get_context.py
@@ -32,7 +32,7 @@ Discover packages + spec layers, then read each relevant index file.
 
 ```bash
 python ./.trellis/scripts/get_context.py --mode packages
-cat .trellis/spec/guides/index.md
+cat .trellis/spec/guides/index.md             # only for relevant cross-cutting concerns
 cat .trellis/spec/<package>/<layer>/index.md   # for each relevant layer
 ```
 
@@ -42,12 +42,14 @@ Index files list the specific guideline docs to read when you actually start cod
 From Step 1 you know the current task and status. Check the task directory:
 
 - **Active task status `planning` + no `prd.md`** → Phase 1.1. Load the `trellis-brainstorm` skill.
-- **Active task status `planning` + `prd.md` exists** → stay in Phase 1. A PRD may stand alone; add `design.md` or `implement.md` only when they improve execution or handoff. Load the relevant Phase 1 step detail before `task.py start`.
-- **Active task status `in_progress`** → Phase 2 step 2.1. Load the step detail:
+- **Active task status `planning` + `prd.md` exists** → inspect unresolved decisions and existing authorization. Add optional design/execution notes only when useful, then load the relevant Phase 1 step before starting.
+- **Active task status `in_progress`** → inspect evidence and continue the next unfinished step; use `trellis-continue` when resuming. For implementation, load:
   ```bash
   python ./.trellis/scripts/get_context.py --mode phase --step 2.1 --platform codex
   ```
-- **No active task** → classify first. Continue inline for simple conversation, read-only review, or small work where persistence would not help. For complex, multi-step, cross-session, release/install, production, or high-risk work, create a Trellis task directly and enter planning unless the user explicitly opts out. Never ask solely to confirm task creation.
+- **No active task** → follow the current workflow's request triage and existing authorization. Simple conversation needs no task ritual; material open decisions may need `trellis-brainstorm`.
+
+For a wider relation view use `task.py related <task> --depth 2`. Full inventories remain available through `task.py list` and `task.py list-archive`; do not print them again by default.
 
 ---
 
@@ -55,10 +57,10 @@ From Step 1 you know the current task and status. Check the task directory:
 
 | User intent | Skill |
 |---|---|
-| New feature / unclear requirements | `trellis-brainstorm` |
+| Unresolved product or scope decisions | `trellis-brainstorm` |
 | About to write code | `trellis-before-dev` |
-| Done coding / quality check | `trellis-check` |
+| Affected behavior needs review | `trellis-check` |
 | Stuck / fixed same bug multiple times | `trellis-break-loop` |
 | Learned something worth capturing | `trellis-update-spec` |
 
-Full rules + anti-rationalization table in `.trellis/workflow.md`.
+Full phase and authorization rules live in `.trellis/workflow.md`.

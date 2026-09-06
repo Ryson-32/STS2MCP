@@ -21,11 +21,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .active_task import resolve_context_key
+from .active_task import resolve_active_task, resolve_context_key
 from .config import get_git_packages
 from .git import run_git
 from .packages_context import get_packages_section
 from .tasks import iter_active_tasks, load_task, get_all_statuses, children_progress
+from .task_relations import TaskRelations, render_relations
 from .paths import (
     DIR_SCRIPTS,
     DIR_SPEC,
@@ -620,11 +621,14 @@ def get_context_text(repo_root: Path | None = None) -> str:
 
     # Current task
     lines.append("## CURRENT TASK")
-    current_task = get_current_task(repo_root)
+    active = resolve_active_task(repo_root)
+    current_task = active.task_path
     if current_task:
         current_task_dir = repo_root / current_task
         source_type, context_key, _ = get_current_task_source(repo_root)
         lines.append(f"Path: {current_task}")
+        if active.stale:
+            lines.append("[!] Stale session task pointer; select an existing task explicitly.")
         lines.append(
             f"Source: {source_type}" + (f":{context_key}" if context_key else "")
         )
@@ -646,47 +650,9 @@ def get_context_text(repo_root: Path | None = None) -> str:
         lines.append("(none)")
     lines.append("")
 
-    # Active tasks
-    lines.append("## ACTIVE TASKS")
-    tasks_dir = get_tasks_dir(repo_root)
-    task_count = 0
-
-    # Collect all task data for hierarchy display
-    all_tasks = {t.dir_name: t for t in iter_active_tasks(tasks_dir)}
-    all_statuses = {name: t.status for name, t in all_tasks.items()}
-
-    def _print_task_tree(name: str, indent: int = 0) -> None:
-        nonlocal task_count
-        t = all_tasks[name]
-        progress = children_progress(t.children, all_statuses)
-        prefix = "  " * indent
-        lines.append(f"{prefix}- {name}/ ({t.status}){progress} @{t.assignee or '-'}")
-        task_count += 1
-        for child in t.children:
-            if child in all_tasks:
-                _print_task_tree(child, indent + 1)
-
-    for dir_name in sorted(all_tasks.keys()):
-        if not all_tasks[dir_name].parent:
-            _print_task_tree(dir_name)
-
-    if task_count == 0:
-        lines.append("(no active tasks)")
-    lines.append(f"Total: {task_count} active task(s)")
-    lines.append("")
-
-    # My tasks
-    lines.append("## MY TASKS (Assigned to me)")
-    my_task_count = 0
-
-    for t in all_tasks.values():
-        if t.assignee == developer and t.status != "done":
-            progress = children_progress(t.children, all_statuses)
-            lines.append(f"- [{t.priority}] {t.title} ({t.status}){progress}")
-            my_task_count += 1
-
-    if my_task_count == 0:
-        lines.append("(no tasks assigned to you)")
+    lines.append("## TASK RELATIONSHIPS")
+    graph = TaskRelations(get_tasks_dir(repo_root))
+    lines.extend(render_relations(graph.view(current_task)))
     lines.append("")
 
     # Journal file

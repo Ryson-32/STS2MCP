@@ -54,8 +54,8 @@ def load_task(task_dir: Path) -> TaskInfo | None:
         status=data.get("status", "unknown"),
         assignee=data.get("assignee", ""),
         priority=data.get("priority", "P2"),
-        children=tuple(data.get("children", [])),
-        parent=data.get("parent"),
+        children=tuple(dict.fromkeys(c for c in data.get("children", []) if isinstance(c, str))) if isinstance(data.get("children"), list) else (),
+        parent=data.get("parent") if isinstance(data.get("parent"), str) else None,
         package=data.get("package"),
         raw=data,
     )
@@ -84,7 +84,7 @@ def iter_active_tasks(tasks_dir: Path) -> Iterator[TaskInfo]:
 
 
 def get_all_statuses(tasks_dir: Path) -> dict[str, str]:
-    """Get a {dir_name: status} mapping for all active tasks.
+    """Get statuses for exact paths and unique names, including archived tasks.
 
     Useful for computing children progress without loading full TaskInfo.
 
@@ -94,7 +94,25 @@ def get_all_statuses(tasks_dir: Path) -> dict[str, str]:
     Returns:
         Dict mapping directory names to status strings.
     """
-    return {t.dir_name: t.status for t in iter_active_tasks(tasks_dir)}
+    from .task_relations import TaskRelations
+    graph = TaskRelations(tasks_dir, read_plans=False)
+    statuses: dict[str, str] = {}
+    for ref in {*graph.tasks, *graph.names}:
+        targets = graph.resolve(ref)
+        status = graph.tasks[targets[0]].status if len(targets) == 1 else "ambiguous"
+        for alias in (ref, f".trellis/tasks/{ref}", f"tasks/{ref}"):
+            statuses[alias] = status
+    return statuses
+
+
+def iter_all_tasks(tasks_dir: Path) -> Iterator[TaskInfo]:
+    """Read unarchived tasks and monthly archives without inferring completion."""
+    yield from iter_active_tasks(tasks_dir)
+    archive = tasks_dir / "archive"
+    if archive.is_dir():
+        for month in sorted(archive.iterdir()):
+            if month.is_dir():
+                yield from iter_active_tasks(month)
 
 
 def children_progress(
@@ -112,11 +130,18 @@ def children_progress(
     """
     if not children:
         return ""
-    # A child missing from active statuses has been archived (cmd_archive
-    # sets status=completed before moving the dir). Count it as done so
-    # parent progress doesn't regress when children are archived.
+    unique: dict[tuple[bool, str], str] = {}
+    for child in children:
+        status = all_statuses.get(child)
+        resolved = status is not None and status != "ambiguous"
+        name = Path(child.replace("\\", "/")).name
+        identity = name if resolved and all_statuses.get(name) not in (None, "ambiguous") else child
+        unique.setdefault((resolved, identity), child)
+    children = list(unique.values())
     done = sum(
         1 for c in children
-        if c not in all_statuses or all_statuses.get(c) in ("completed", "done")
+        if all_statuses.get(c) in ("completed", "done")
     )
-    return f" [{done}/{len(children)} done]"
+    unknown = sum(c not in all_statuses or all_statuses[c] == "ambiguous" for c in children)
+    suffix = f"; {unknown} missing/ambiguous" if unknown else ""
+    return f" [{done}/{len(children)} done{suffix}]"

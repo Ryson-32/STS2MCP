@@ -1,11 +1,11 @@
 ---
 name: trellis-check
-description: "Comprehensive quality verification: spec compliance, lint, type-check, tests, cross-layer data flow, code reuse, and consistency checks. Use when code is written and needs quality verification, before committing changes, or to catch context drift during long sessions."
+description: "Review affected behavior against task requirements and relevant specs, run required project checks, and fix local findings only within an explicitly authorized isolated write scope."
 ---
 
 # Code Quality Check
 
-Comprehensive quality verification for recently written code. Combines spec compliance, cross-layer safety, and pre-commit checks.
+Review affected behavior against task requirements, relevant specs, and proportionate evidence.
 
 ---
 
@@ -38,9 +38,11 @@ Read the specific guideline files referenced — the index is a pointer, not the
 
 ## Step 3: Run Project Checks
 
-Run the project's affected lint, type-check, and test commands. An inline authoring session may fix failures within its current implementation authority. A delegated reviewer may edit only when its dispatch names an explicit writable scope and project isolation requirements hold; otherwise it reports failures without editing.
+Run the affected checks required by the project: these may be tests, builds, lint, type checks, document validation, or a direct behavior probe. Select commands from current project configuration and specs; do not assume every repository has lint or typecheck. Report failures and unavailable checks accurately.
 
 ## Step 4: Review Against Checklist
+
+Apply only the checks relevant to this change and required by the project. Report the reason when an applicable check is skipped or unavailable; the checklist does not introduce extra lint, typecheck, or test requirements.
 
 ### Code Quality
 
@@ -52,9 +54,9 @@ Run the project's affected lint, type-check, and test commands. An inline author
 
 ### Test Coverage
 
-- [ ] New function → unit test added?
-- [ ] Bug fix → regression test added?
-- [ ] Changed behavior → existing tests updated?
+- [ ] Do checks exercise the changed behavior and material failure modes?
+- [ ] Would a regression test detect the original bug, rather than mirror implementation details?
+- [ ] Is existing evidence sufficient, or does a boundary change need an additional check?
 
 ### Spec Sync
 
@@ -74,7 +76,7 @@ Run the project's affected lint, type-check, and test commands. An inline author
 
 Skip this step if your change is confined to a single layer.
 
-### A. Data Flow (changes touch 3+ layers)
+### A. Data Flow (changes cross a contract boundary)
 
 - [ ] Read flow traces correctly: Storage → Service → API → UI
 - [ ] Write flow traces correctly: UI → API → Service → Storage
@@ -85,7 +87,7 @@ Skip this step if your change is confined to a single layer.
 
 - [ ] Searched for existing similar code before creating new?
   ```bash
-  grep -r "pattern" src/
+  rg "pattern" <affected-path>
   ```
 - [ ] If the same value repeats, does it represent one stable concept whose callers must change together? Extract only then — two literals that merely happen to match today should stay separate.
 - [ ] After batch modification, all occurrences updated?
@@ -105,8 +107,8 @@ Skip this step if your change is confined to a single layer.
 
 Report every violation you find. Then:
 
-- In an inline authoring session, fix mechanical and local findings only within current implementation authority.
-- In a delegated review, fix only when the dispatch explicitly authorizes the writable scope and the project-required isolation or single-writer boundary holds. Shared-checkout, read-only, and unscoped reviews report findings without editing.
-- Design or judgment findings remain report-only unless the task requirements explicitly settle them.
+- Read-only review → report findings without editing, even if write tools are available.
+- Mechanical and local fix within an explicitly authorized, isolated write scope → fix in place, then re-run affected checks. Preserve other writers' changes.
+- Design changes, unclear ownership, or edits beyond the authorized scope → record evidence and a recommendation for the owning session; do not silently expand the review.
 
-If a fix would touch files outside the authorized scope, report it and stop instead of widening the change.
+If a fix would touch files outside the current task's scope, say so and stop instead of widening the change.

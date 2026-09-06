@@ -6,6 +6,7 @@ Single source of truth for running git commands across all Trellis scripts.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -40,6 +41,12 @@ def run_git(
     """
     try:
         git_args = ["git", "-c", "i18n.logOutputEncoding=UTF-8"] + args
+        # Auto-commit callers classify git-add diagnostics (ignored paths and
+        # index locks). Pin only this command's messages, not commit hooks or
+        # the parent process; UTF-8 output encoding alone does not set locale.
+        env = None
+        if args and args[0] == "add":
+            env = {**os.environ, "LC_ALL": "C", "LANGUAGE": "C"}
         result = subprocess.run(
             git_args,
             cwd=cwd,
@@ -48,6 +55,7 @@ def run_git(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=env,
         )
         return result.returncode, result.stdout, result.stderr
     except Exception as e:

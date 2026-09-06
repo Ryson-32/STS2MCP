@@ -9,8 +9,8 @@ Provides:
 
 Note:
     ``cmd_init_context`` was removed in v0.5.0-beta.12. JSONL context files
-    are created empty at ``task.py create`` time; the AI agent curates real
-    entries during planning when the task needs sub-agent/spec context. See
+    are created on demand by ``task.py add-context``; the AI agent curates real
+    entries when the task needs sub-agent/spec context. See
     ``.trellis/workflow.md`` for the current planning artifact contract.
 
     Older Trellis versions seeded those files with a ``{"_example": ...}``
@@ -267,13 +267,19 @@ def _resolve_context_entry_path(
     return resolved_path
 
 
-def _validate_jsonl(jsonl_file: Path, repo_root: Path, task_dir: Path | None = None) -> int:
+def _validate_jsonl(
+    jsonl_file: Path, repo_root: Path, task_dir: Path | None = None,
+    optional: bool = False,
+) -> int:
     """Validate a single JSONL file.
 
     ``{"_example": ...}`` placeholder rows written by older Trellis versions
     are hard errors: PR preflight rejects them as unresolved scaffolding, so
     accepting them here would pass locally and fail later. Other rows without
     a ``file`` field are skipped silently, matching what consumers do.
+
+    With ``optional=True`` (start), empty and seed-only files are treated as
+    absent. Real entries still need valid JSON, a path, and an existing target.
 
     Beyond hard errors (missing file/dir, invalid JSON), this also prints
     non-blocking hygiene warnings (never counted in ``errors``, never change
@@ -297,9 +303,14 @@ def _validate_jsonl(jsonl_file: Path, repo_root: Path, task_dir: Path | None = N
 
     max_file_bytes = get_context_injection_limits(repo_root).get("max_file_bytes", 0)
 
+    try:
+        lines = jsonl_file.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        print(f"  {file_name}: unreadable ({type(exc).__name__})")
+        return 1
     line_num = 0
     real_entries = 0
-    for line in jsonl_file.read_text(encoding="utf-8").splitlines():
+    for line in lines:
         line_num += 1
         if not line.strip():
             continue
@@ -319,6 +330,8 @@ def _validate_jsonl(jsonl_file: Path, repo_root: Path, task_dir: Path | None = N
             continue
 
         if "_example" in data:
+            if optional and not ("file" in data or "path" in data):
+                continue
             error_message = (
                 f"{file_name}:{line_num}: Placeholder `_example` row left by an older "
                 "task.py create — delete this line, or replace it with "
@@ -328,10 +341,13 @@ def _validate_jsonl(jsonl_file: Path, repo_root: Path, task_dir: Path | None = N
             errors += 1
             continue
 
-        file_path = data.get("file")
+        file_path = data.get("file", data.get("path"))
         entry_type = data.get("type", "file")
 
         if not file_path:
+            if optional:
+                print(f"  {file_name}:{line_num}: Expected a non-empty file path")
+                errors += 1
             # Comment / unknown row without a path — skip silently
             continue
 
@@ -386,6 +402,9 @@ def _validate_jsonl(jsonl_file: Path, repo_root: Path, task_dir: Path | None = N
                 print(f"  {colored(warning_message, Colors.YELLOW)}")
 
     if errors == 0 and real_entries == 0:
+        if optional:
+            print(f"  {file_name}: optional (no real entries)")
+            return 0
         # Seed-only / empty manifest: sub-agents dispatched for this task
         # would run with zero spec context (#573). Silent-green here is how
         # more than half the tasks in the report ended up uncurated.

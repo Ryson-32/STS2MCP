@@ -54,10 +54,12 @@ from common.io import (
     write_json,
 )
 from common.task_utils import resolve_task_dir, run_task_hooks
-from common.tasks import iter_active_tasks, children_progress
+from common.tasks import iter_active_tasks, children_progress, get_all_statuses
+from common.task_relations import TaskRelations, render_relations
 
 # Import command handlers from split modules (also re-exports for plan.py compatibility)
 from common.task_store import (
+    _serialized_task_write,
     cmd_create,
     cmd_rename,
     cmd_archive,
@@ -72,7 +74,7 @@ from common.task_context import (
     cmd_add_context,
     cmd_validate,
     cmd_list_context,
-    curated_entry_count,
+    _validate_jsonl,
 )
 
 
@@ -80,6 +82,7 @@ from common.task_context import (
 # Command: start / finish
 # =============================================================================
 
+@_serialized_task_write
 def _record_start_state(
     task_json_path: Path,
     repo_root: Path,
@@ -168,6 +171,7 @@ def _record_start_state(
         )
 
 
+@_serialized_task_write
 def cmd_start(args: argparse.Namespace) -> int:
     """Set active task."""
     repo_root = get_repo_root()
@@ -191,28 +195,18 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("Hint: Use task name (e.g., 'my-task') or full path (e.g., '.trellis/tasks/01-31-my-task')")
         return 1
 
-    # Context-manifest gate (#573): a seeded-but-uncurated implement/check
-    # manifest means every sub-agent dispatched for this task runs with zero
-    # spec context, and nothing downstream surfaces that to the main session.
-    # An absent manifest is not gated — create seeds the files only on
-    # sub-agent-capable platforms, so absence means no sub-agent reads them.
-    if not getattr(args, "allow_empty_context", False):
-        empty_manifests = [
-            name
-            for name in ("implement.jsonl", "check.jsonl")
-            if curated_entry_count(full_path / name) == 0
-        ]
-        if empty_manifests:
-            print(colored(
-                f"Error: {' and '.join(empty_manifests)} "
-                f"{'has' if len(empty_manifests) == 1 else 'have'} no curated entries",
-                Colors.RED,
-            ))
-            print("Sub-agents (implement/check) would run with zero spec context.")
-            print(f"  Curate:  python .trellis/scripts/task.py add-context {task_input} implement <path> \"<why>\"")
-            print(f"  Verify:  python .trellis/scripts/task.py validate {task_input}")
-            print("  Intentionally empty? Re-run start with --allow-empty-context")
-            return 1
+    # Optional manifests never impose a planning-document requirement. If real
+    # entries exist, validate them before changing status or the session pointer.
+    # --allow-empty-context remains accepted for old callers; it cannot hide a
+    # malformed or missing real entry.
+    errors = sum(
+        _validate_jsonl(full_path / name, repo_root, full_path, optional=True)
+        for name in ("implement.jsonl", "check.jsonl")
+        if (full_path / name).exists()
+    )
+    if errors:
+        print("Error: invalid context entries; fix the named manifest before start.")
+        return 1
 
     # Convert to relative path for storage. repo_root is resolved because
     # full_path already is (resolve_task_dir only returns paths inside the
@@ -383,7 +377,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     # Single pass: collect all tasks via shared iterator
     all_tasks = {t.dir_name: t for t in iter_active_tasks(tasks_dir)}
-    all_statuses = {name: t.status for name, t in all_tasks.items()}
+    all_statuses = get_all_statuses(tasks_dir)
 
     if as_json:
         if filter_mine and not developer:
@@ -422,14 +416,18 @@ def cmd_list(args: argparse.Namespace) -> int:
             return 1
         print(colored(f"My tasks (assignee: {developer}):", Colors.BLUE))
     else:
-        print(colored("All active tasks:", Colors.BLUE))
+        print(colored("All unarchived tasks:", Colors.BLUE))
     print()
 
     # Display tasks hierarchically
     count = 0
+    visited: set[str] = set()
 
     def _print_task(dir_name: str, indent: int = 0) -> None:
         nonlocal count
+        if dir_name in visited:
+            return
+        visited.add(dir_name)
         t = all_tasks[dir_name]
 
         # Apply --mine filter
@@ -473,6 +471,11 @@ def cmd_list(args: argparse.Namespace) -> int:
         if not parent or parent not in all_tasks:
             _print_task(dir_name)
 
+    # Filtered parents, incomplete reverse links and rootless cycles must not
+    # hide otherwise matching tasks. Each task is emitted at most once.
+    for dir_name in sorted(all_tasks):
+        _print_task(dir_name)
+
     if count == 0:
         if filter_mine:
             print("  (no tasks assigned to you)")
@@ -481,7 +484,29 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     print()
     print(f"Total: {count} task(s)")
+    print("Inspect relationships and anomalies: task.py related <task> [--depth 2]")
     return 0
+
+
+def cmd_related(args: argparse.Namespace) -> int:
+    """Inspect a neighborhood while scanning every task for reverse references."""
+    repo_root = get_repo_root()
+    if args.depth < 1:
+        print("Error: --depth must be at least 1", file=sys.stderr)
+        return 1
+    active = resolve_active_task(repo_root)
+    target = args.name or active.task_path
+    graph = TaskRelations(get_tasks_dir(repo_root))
+    view = graph.view(target, args.depth)
+    if not args.name:
+        view["current_task_state"] = "stale" if active.stale else "current" if target else "none"
+        if active.stale:
+            view["issues"].insert(0, {"task": target, "message": "stale session task pointer; select an existing task explicitly"})
+    if args.json:
+        print(json.dumps(view, ensure_ascii=False))
+    else:
+        print("\n".join(render_relations(view)))
+    return 0 if len(view["roots"]) == 1 and not (not args.name and active.stale) else 1
 
 
 # =============================================================================
@@ -609,11 +634,11 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            "implement.jsonl / check.jsonl are created on demand during planning",
+            "implement.jsonl / check.jsonl are optional; create them with real entries",
             file=sys.stderr,
         )
         print(
-            "with `task.py add-context` or direct editing when explicit handoff is useful.",
+            "through task.py add-context when sub-agents need curated spec/research context.",
             file=sys.stderr,
         )
         print("See .trellis/workflow.md planning artifact guidance or run:", file=sys.stderr)
@@ -687,7 +712,7 @@ def main() -> int:
     p_start.add_argument(
         "--allow-empty-context",
         action="store_true",
-        help="Start even when implement.jsonl / check.jsonl have no curated entries",
+        help="Compatibility flag; empty context is already allowed, real entries are still validated",
     )
 
     # current
@@ -750,6 +775,11 @@ def main() -> int:
     p_list.add_argument("--status", "-s", help="Filter by status")
     p_list.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
+    p_related = subparsers.add_parser("related", help="Current task neighborhood, including reverse references and anomalies")
+    p_related.add_argument("name", nargs="?", help="Exact task name/path; defaults to current task")
+    p_related.add_argument("--depth", type=int, default=1, help="Relationship hops to display (default: 1); always scan all reverse references")
+    p_related.add_argument("--json", action="store_true", help="Output relationships and source evidence as JSON")
+
     # add-subtask
     p_addsub = subparsers.add_parser("add-subtask", help="Link child task to parent")
     p_addsub.add_argument("parent_dir", help="Parent task directory")
@@ -787,6 +817,7 @@ def main() -> int:
         "add-subtask": cmd_add_subtask,
         "remove-subtask": cmd_remove_subtask,
         "list": cmd_list,
+        "related": cmd_related,
         "list-archive": cmd_list_archive,
     }
 
