@@ -39,6 +39,7 @@
 | [安全高效工作流](safe-workflow-and-efficiency.md) | 任务开始、恢复或范围切换，以及规划、执行、验证或交付时 |
 | [权限与变更安全](authority-and-change-safety.md) | 删除、清理、迁移、push、部署或其它外部变更前 |
 | [Shell 与命令可移植性](shell-and-command-portability.md) | 编写 Mac、Windows、远端或跨 shell 命令时 |
+| [VPS 与远端操作](vps-operations.md) | 涉及任何 VPS、SSH 或其它远端操作时，包括只读排查、探测、配置、部署和恢复 |
 | [新项目标准初始化](new-project-bootstrap.md) | 新仓库初始化 Trellis 或同步标准 profile 时 |
 
 ## 共享规则与项目边界

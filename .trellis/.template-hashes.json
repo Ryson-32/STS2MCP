@@ -166,7 +166,7 @@
     ".trellis/spec/shared/engineering-principles.md": "94f8e4b2cbd7ab97c7d1cd57a16b66f5744dc97e98d40e7910adf8ff2e6a25ce",
     ".trellis/spec/shared/evidence-and-verification.md": "e7cdf953574cbbf89d04c187c0d9b2d7335854a03e50f40b60afd876c5ce6535",
     ".trellis/spec/shared/external-executor-lifecycle.md": "14eb7a6a627635e2fdfb28bf16fc72658f6c584023f72f16bec2114c7f4beaf3",
-    ".trellis/spec/shared/index.md": "e484c22c05c620e9162c6e5af0446d130c8eea97204501774627b965bc3533e7",
+    ".trellis/spec/shared/index.md": "bd6175d82b0475dde7796f56896baa3b3c0368fb85b73af3669e34fd23329dfb",
     ".trellis/spec/shared/language-author-academic.md": "19528e514106eb75f2f9f48201dd9864bb91ac203de3db352d1803b3bf5d9987",
     ".trellis/spec/shared/language-fci.md": "058473928342b188139e50e1bcc11616079a03bc6e7e94d26f4f9b64e17ebce9",
     ".trellis/spec/shared/language-general.md": "8d33217f17e24a90e4bfb777cd490195c32a750d0487cf6d22394976a4f7e6d0",
@@ -180,7 +180,8 @@
     ".trellis/spec/shared/subagent-orchestration.md": "7e308f31348b2cfc01309beb5fd789474f3333e6957bbe39ea42f3fb0824d5d4",
     ".trellis/spec/shared/trellis-project-state.md": "a2957a693aeeaa1479ecad75e9ecbe3c75cf625339ed17cf2f53c322535aca47",
     ".trellis/spec/shared/upstream-fork-governance.md": "dbc34352e8b7c48bf47d621f730394e622c8649c5c46cabd8e91799ae4abafe7",
+    ".trellis/spec/shared/vps-operations.md": "5ecce991f71d38ed19649bb223914f898b0c652dc6bd9fcb3efb6e6d03d69acd",
     ".trellis/workflow.md": "b25b9c4576f7c90980caa388a16f3498644401f2b8d6200a5707e231342f8748",
-    "AGENTS.md": "3b3ee96efbe8baaf7ea24bb916c798e52a7d984f9480ab26034323f8013ebe35"
+    "AGENTS.md": "a7583d2a554d6c9540742455f01fb56bd086f78c36991cc5176c8c9752d4e78b"
   }
 }
