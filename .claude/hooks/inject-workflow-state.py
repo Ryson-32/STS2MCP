@@ -421,6 +421,33 @@ def _load_hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _shared_spec_context(root: Path, data: dict, platform: str | None) -> str:
+    """Prepare the optional central shared-spec pin for this main session."""
+    scripts_dir = root / ".trellis" / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.shared_spec_cache import (  # type: ignore[import-not-found]
+            ensure_shared_spec_context,
+            render_shared_spec_context,
+        )
+
+        context = ensure_shared_spec_context(
+            root,
+            platform_input=data,
+            platform=platform,
+            allow_remote=True,
+        )
+        return render_shared_spec_context(context)
+    except Exception:
+        return (
+            '<shared-spec-context status="blocked">\n'
+            "Shared specs are configured but the cache runtime could not be loaded. "
+            "Read-only diagnostics may continue; writes that depend on shared rules are blocked.\n"
+            "</shared-spec-context>"
+        ) if (_read_trellis_config(root).get("shared_specs") is not None) else ""
+
+
 def main() -> int:
     if os.environ.get("TRELLIS_HOOKS") == "0" or os.environ.get("TRELLIS_DISABLE_HOOKS") == "1":
         return 0
@@ -462,6 +489,10 @@ def main() -> int:
         parts.append(_codex_mode_banner(config))
         parts.append(breadcrumb)
         breadcrumb = "\n\n".join(parts)
+
+    shared_context = _shared_spec_context(root, data, platform)
+    if shared_context:
+        breadcrumb = f"{shared_context}\n\n{breadcrumb}"
 
     # Kiro (CLI userPromptSubmit / IDE promptSubmit) adds a hook's stdout
     # directly to the conversation context — no JSON envelope. Emit the bare

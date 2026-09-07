@@ -76,6 +76,8 @@ python ./.trellis/scripts/task.py create-pr [name] [--dry-run]
 
 **Current-task mechanism**: `task.py create` creates the task directory and (when session identity is available) auto-sets the per-session active-task pointer so the planning breadcrumb fires immediately. `task.py start` writes the same pointer (idempotent if already set) and flips `task.json.status` from `planning` to `in_progress`. State is stored under `.trellis/.runtime/sessions/`. If no context key is available from hook input, `TRELLIS_CONTEXT_ID`, or a platform-native session environment variable, there is no active task and `task.py start` fails with a session identity hint. `task.py finish` deletes the current session file (status unchanged). `task.py archive <task>` writes `status=completed`, moves the directory to `archive/`, and deletes any runtime session files that still point at the archived task.
 
+Tasks may record one or more owned Git worktrees in `task.json.worktrees`. Use `worktree.py create|inspect|move|cleanup`; the default location is `~/Workspace/worktrees/<main-checkout-name>/`. `task.py finish` and `task.py archive` only print a read-only residue hint when such metadata exists. They never clean a worktree automatically. Move and cleanup require an explicit inactivity confirmation and still preserve primary, active, dirty, linked, foreign, or recovery-uncertain worktrees.
+
 ### Workspace System
 
 Records every AI session for cross-session tracking under `.trellis/workspace/<developer>/`.

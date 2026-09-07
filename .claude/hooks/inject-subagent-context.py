@@ -263,16 +263,48 @@ def _real_path_contained(base_real: str, target_real: str) -> bool:
         return False
 
 
-def _read_file_bytes(base_path: str, file_path: str) -> bytes | None:
+def _resolve_shared_path(
+    base_path: str, file_path: str, task_dir: str | None = None
+) -> str | None:
+    scripts_dir = Path(base_path) / DIR_WORKFLOW / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.shared_spec_cache import (  # type: ignore[import-not-found]
+            is_shared_spec_reference,
+            resolve_shared_spec_reference,
+        )
+
+        if not is_shared_spec_reference(file_path):
+            return None
+        resolved = resolve_shared_spec_reference(
+            file_path,
+            Path(base_path),
+            task_dir=task_dir,
+        )
+        return str(resolved) if resolved is not None else None
+    except Exception:
+        return None
+
+
+def _read_file_bytes(
+    base_path: str, file_path: str, task_dir: str | None = None
+) -> bytes | None:
     """Read raw file bytes, return None if file doesn't exist."""
     full_path = os.path.join(base_path, file_path)
+    trusted_shared = False
+    if not os.path.exists(full_path):
+        shared_path = _resolve_shared_path(base_path, file_path, task_dir)
+        if shared_path:
+            full_path = shared_path
+            trusted_shared = True
     try:
         root_real = os.path.realpath(base_path)
         # `.trellis` may itself be a symlink into a store outside the repo
         # (#567); its real location is a second legitimate containment base.
         workflow_real = os.path.realpath(os.path.join(base_path, ".trellis"))
         full_real = os.path.realpath(full_path)
-        if not _real_path_contained(root_real, full_real) and not (
+        if not trusted_shared and not _real_path_contained(root_real, full_real) and not (
             _real_path_contained(workflow_real, full_real)
         ):
             return None
@@ -342,9 +374,10 @@ def _materialize_file(
     reason: str,
     limits: dict[str, int],
     budget: _Budget,
+    task_dir: str | None = None,
 ) -> str | None:
     """Read a JSONL-referenced file, apply the per-file cap, then budget it."""
-    data = _read_file_bytes(base_path, file_path)
+    data = _read_file_bytes(base_path, file_path, task_dir)
     if data is None:
         return None
 
@@ -370,10 +403,15 @@ def _materialize_directory(
     limits: dict[str, int],
     budget: _Budget,
     max_files: int = 20,
+    task_dir: str | None = None,
 ) -> list[str]:
     """Read all .md files in a directory, applying the same per-file and
     total caps as a single-file JSONL entry."""
     full_path = os.path.join(base_path, dir_path)
+    if not os.path.exists(full_path):
+        shared_path = _resolve_shared_path(base_path, dir_path, task_dir)
+        if shared_path:
+            full_path = shared_path
     if not os.path.exists(full_path) or not os.path.isdir(full_path):
         return []
 
@@ -386,7 +424,9 @@ def _materialize_directory(
         )
         for filename in md_files[:max_files]:
             relative_path = os.path.join(dir_path, filename)
-            block = _materialize_file(base_path, relative_path, reason, limits, budget)
+            block = _materialize_file(
+                base_path, relative_path, reason, limits, budget, task_dir
+            )
             if block:
                 blocks.append(block)
     except Exception:
@@ -461,7 +501,11 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[dict]:
 
 
 def _materialize_jsonl_entries(
-    base_path: str, jsonl_path: str, limits: dict[str, int], budget: _Budget
+    base_path: str,
+    jsonl_path: str,
+    limits: dict[str, int],
+    budget: _Budget,
+    task_dir: str | None = None,
 ) -> list[str]:
     """Materialize every entry in a jsonl context file into context blocks,
     applying per-file and total budget caps."""
@@ -470,12 +514,22 @@ def _materialize_jsonl_entries(
         if entry["type"] == "directory":
             blocks.extend(
                 _materialize_directory(
-                    base_path, entry["file"], entry["reason"], limits, budget
+                    base_path,
+                    entry["file"],
+                    entry["reason"],
+                    limits,
+                    budget,
+                    task_dir=task_dir,
                 )
             )
         else:
             block = _materialize_file(
-                base_path, entry["file"], entry["reason"], limits, budget
+                base_path,
+                entry["file"],
+                entry["reason"],
+                limits,
+                budget,
+                task_dir,
             )
             if block:
                 blocks.append(block)
@@ -494,7 +548,9 @@ def get_agent_context(
     Reads implement.jsonl or check.jsonl only when that optional manifest exists.
     """
     agent_jsonl = f"{task_dir}/{agent_type}.jsonl"
-    blocks = _materialize_jsonl_entries(repo_root, agent_jsonl, limits, budget)
+    blocks = _materialize_jsonl_entries(
+        repo_root, agent_jsonl, limits, budget, task_dir
+    )
     if not blocks:
         # Zero curated context reaches the model silently otherwise — the
         # stderr WARN above never enters any session (#573). Put the fact in
@@ -997,6 +1053,49 @@ Active task: {task_dir or ACTIVE_TASK_NONE}
 {context}"""
 
 
+def _shared_specs_declared(repo_root: str) -> bool:
+    try:
+        config = Path(repo_root) / DIR_WORKFLOW / "config.yaml"
+        return "shared_specs:" in config.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+
+
+def _shared_spec_context_text(
+    repo_root: str,
+    input_data: dict,
+    task_dir: str | None,
+    *,
+    allow_remote: bool = False,
+) -> str:
+    scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.shared_spec_cache import (  # type: ignore[import-not-found]
+            ensure_shared_spec_context,
+            render_shared_spec_context,
+        )
+
+        context = ensure_shared_spec_context(
+            Path(repo_root),
+            task_dir=task_dir,
+            platform_input=input_data,
+            platform=_detect_platform(input_data),
+            allow_remote=allow_remote,
+        )
+        return render_shared_spec_context(context)
+    except Exception:
+        if not _shared_specs_declared(repo_root):
+            return ""
+        return (
+            '<shared-spec-context status="blocked">\n'
+            "The shared-spec cache runtime could not be loaded. Read-only diagnostics may continue; "
+            "writes that depend on shared rules are blocked.\n"
+            "</shared-spec-context>"
+        )
+
+
 def _handle_codex_subagent_start(input_data: dict) -> None:
     """Emit Codex developer context for a recognised native Trellis subagent.
 
@@ -1038,11 +1137,21 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
             return
 
     if subagent_type == AGENT_IMPLEMENT:
+        if task_dir is None:
+            return
         context = get_implement_context(repo_root, task_dir)
     elif subagent_type == AGENT_CHECK:
+        if task_dir is None:
+            return
         context = get_check_context(repo_root, task_dir)
     else:
         context = get_research_context(repo_root, task_dir)
+
+    shared_context = _shared_spec_context_text(
+        repo_root, input_data, task_dir, allow_remote=False
+    )
+    if shared_context:
+        context = f"{shared_context}\n\n{context}"
 
     if not context:
         return
@@ -1219,30 +1328,44 @@ def main():
     # Check for [finish] marker in prompt (check agent with finish context)
     is_finish_phase = "[finish]" in original_prompt.lower()
 
-    # Get context and build prompt based on subagent type
+    # Get role context first; shared context must be included before the final
+    # role prompt is built so every PreToolUse host receives the pinned rules.
     if subagent_type == AGENT_IMPLEMENT:
         assert task_dir is not None  # validated above
         context = get_implement_context(repo_root, task_dir)
-        new_prompt = build_implement_prompt(original_prompt, context)
     elif subagent_type == AGENT_CHECK:
         assert task_dir is not None  # validated above
         if is_finish_phase:
             # Finish phase: use finish context (lighter, focused on final verification)
             context = get_finish_context(repo_root, task_dir)
-            new_prompt = build_finish_prompt(original_prompt, context)
         else:
             # Regular check phase: use check context (full specs for self-fix loop)
             context = get_check_context(repo_root, task_dir)
-            new_prompt = build_check_prompt(original_prompt, context)
     elif subagent_type == AGENT_RESEARCH:
         # Research can work without task directory
         context = get_research_context(repo_root, task_dir)
-        new_prompt = build_research_prompt(original_prompt, context)
     else:
         sys.exit(0)
 
+    shared_context = _shared_spec_context_text(
+        repo_root, input_data, task_dir, allow_remote=False
+    )
+    if shared_context:
+        context = f"{shared_context}\n\n{context}"
+
     if not context:
         sys.exit(0)
+
+    if subagent_type == AGENT_IMPLEMENT:
+        new_prompt = build_implement_prompt(original_prompt, context)
+    elif subagent_type == AGENT_CHECK:
+        new_prompt = (
+            build_finish_prompt(original_prompt, context)
+            if is_finish_phase
+            else build_check_prompt(original_prompt, context)
+        )
+    else:
+        new_prompt = build_research_prompt(original_prompt, context)
 
     # Return updated input. Most platforms ignore unrecognized fields, so we
     # include multiple formats. ZCode is stricter; live probing confirmed the

@@ -25,6 +25,7 @@ from .active_task import resolve_active_task, resolve_context_key
 from .config import get_git_packages
 from .git import run_git
 from .packages_context import get_packages_section
+from .shared_spec_cache import ensure_shared_spec_context, render_shared_spec_context
 from .tasks import iter_active_tasks, load_task, get_all_statuses, children_progress
 from .task_relations import TaskRelations, render_relations
 from .paths import (
@@ -559,6 +560,10 @@ def get_context_json(repo_root: Path | None = None) -> dict:
     if pkg_git_info:
         result["packageGit"] = pkg_git_info
 
+    shared_specs = ensure_shared_spec_context(repo_root, allow_remote=False)
+    if shared_specs.configured:
+        result["sharedSpecs"] = shared_specs.to_dict()
+
     return result
 
 
@@ -673,6 +678,13 @@ def get_context_text(repo_root: Path | None = None) -> str:
     packages_text = get_packages_section(repo_root)
     if packages_text:
         lines.append(packages_text)
+        lines.append("")
+
+    shared_specs = render_shared_spec_context(
+        ensure_shared_spec_context(repo_root, allow_remote=True)
+    )
+    if shared_specs:
+        lines.append(shared_specs)
         lines.append("")
 
     # Paths

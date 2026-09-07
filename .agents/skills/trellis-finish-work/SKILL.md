@@ -7,6 +7,8 @@ description: "Finishes the current Trellis task after the scoped work is checked
 
 Use this after the task's actual work and proportionate checks are complete. This command archives task state and records the session; it does not make the work commit for you.
 
+If the task records Git worktrees, archive prints their current residue as a read-only hint. Review them with `.trellis/scripts/worktree.py inspect <task>` and run an explicit move or cleanup separately. Archive never removes a worktree.
+
 ## Review the current state
 
 ```bash

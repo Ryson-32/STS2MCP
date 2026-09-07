@@ -1377,6 +1377,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
         archive_dest = Path(result["archived_to"])
         year_month = archive_dest.parent.name
         print(colored(f"Archived: {dir_name} -> archive/{year_month}/", Colors.GREEN), file=sys.stderr)
+        from .worktree import print_closeout_hint
+        print_closeout_hint(repo_root, archive_dest, "archive")
 
         # Auto-commit unless --no-commit
         if not getattr(args, "no_commit", False):

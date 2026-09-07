@@ -480,3 +480,26 @@ def get_spec_scope(repo_root: Path | None = None) -> list[str] | str | None:
     if isinstance(scope, list):
         return [str(s) for s in scope]
     return None
+
+
+def get_worktree_root(repo_root: Path | None = None) -> Path:
+    """Return the project worktree root, defaulting to ~/Workspace/worktrees."""
+    config = _load_config(repo_root)
+    section = config.get("worktree")
+    raw = section.get("root") if isinstance(section, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return Path(raw).expanduser()
+    return Path.home() / "Workspace" / "worktrees"
+
+
+def get_worktree_branch_prefix(repo_root: Path | None = None) -> str:
+    """Return the project branch prefix used by worktree creation."""
+    config = _load_config(repo_root)
+    section = config.get("worktree")
+    raw = section.get("branch_prefix") if isinstance(section, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().strip("/")
+    from .git import main_worktree_root
+    from .paths import get_developer
+    root = repo_root or get_repo_root()
+    return get_developer(main_worktree_root(root) or root) or "worktree"

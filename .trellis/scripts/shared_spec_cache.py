@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Manage the optional immutable shared-spec cache.
+
+Usage:
+    python .trellis/scripts/shared_spec_cache.py ensure [--offline] [--json]
+    python .trellis/scripts/shared_spec_cache.py resolve <logical-ref> [--json]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from common.paths import get_repo_root
+from common.shared_spec_cache import (
+    ensure_shared_spec_context,
+    render_shared_spec_context,
+    resolve_shared_spec_reference,
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Prepare or resolve the shared-spec cache")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    ensure_parser = subparsers.add_parser("ensure", help="pin a verified shared-spec snapshot")
+    ensure_parser.add_argument("--offline", action="store_true", help="do not contact the registry")
+    ensure_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
+    ensure_parser.add_argument("--context-key")
+    ensure_parser.add_argument("--task-dir")
+
+    resolve_parser = subparsers.add_parser("resolve", help="resolve a logical shared-spec reference")
+    resolve_parser.add_argument("reference")
+    resolve_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
+    resolve_parser.add_argument("--context-key")
+    resolve_parser.add_argument("--task-dir")
+
+    args = parser.parse_args()
+    repo_root = get_repo_root()
+
+    if args.command == "ensure":
+        context = ensure_shared_spec_context(
+            repo_root,
+            context_key=args.context_key,
+            task_dir=args.task_dir,
+            allow_remote=not args.offline,
+        )
+        payload = context.to_dict()
+        payload["context"] = render_shared_spec_context(context)
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(payload["context"] or "Shared specs are not configured.")
+        return 0 if not context.write_blocked else 2
+
+    resolved = resolve_shared_spec_reference(
+        args.reference,
+        repo_root,
+        context_key=args.context_key,
+        task_dir=args.task_dir,
+    )
+    payload = {"reference": args.reference, "path": str(resolved) if resolved else None}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    elif resolved:
+        print(resolved)
+    return 0 if resolved else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

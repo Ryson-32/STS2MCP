@@ -819,6 +819,43 @@ def _build_workflow_overview(workflow_path: Path) -> str:
     return "\n".join(out_lines).rstrip()
 
 
+def _shared_spec_context(
+    project_dir: Path,
+    hook_input: dict,
+    context_key: str | None,
+) -> str:
+    scripts_dir = project_dir / ".trellis" / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.shared_spec_cache import (  # type: ignore[import-not-found]
+            ensure_shared_spec_context,
+            render_shared_spec_context,
+        )
+
+        context = ensure_shared_spec_context(
+            project_dir,
+            context_key=context_key,
+            platform_input=hook_input,
+            platform=_detect_platform(hook_input),
+            allow_remote=True,
+        )
+        return render_shared_spec_context(context)
+    except Exception:
+        try:
+            declared = "shared_specs:" in (project_dir / ".trellis" / "config.yaml").read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            declared = False
+        if not declared:
+            return ""
+        return (
+            '<shared-spec-context status="blocked">\n'
+            "The shared-spec cache runtime could not be loaded. Read-only diagnostics may continue; "
+            "writes that depend on shared rules are blocked.\n"
+            "</shared-spec-context>"
+        )
+
+
 def main():
     if should_skip_injection():
         sys.exit(0)
@@ -883,6 +920,11 @@ Trellis compact SessionStart context. Use it to orient the session; load details
     output.write("<current-state>\n")
     output.write(_build_compact_current_state(trellis_dir, hook_input, spec_index_paths))
     output.write("\n</current-state>\n\n")
+
+    shared_context = _shared_spec_context(project_dir, hook_input, context_key)
+    if shared_context:
+        output.write(shared_context)
+        output.write("\n\n")
 
     output.write("<trellis-workflow>\n")
     output.write(_build_workflow_overview(trellis_dir / "workflow.md"))

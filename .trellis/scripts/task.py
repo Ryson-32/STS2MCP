@@ -284,6 +284,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
 
     if task_json_path.is_file():
         run_task_hooks("after_finish", task_json_path, repo_root)
+        from common.worktree import print_closeout_hint
+        print_closeout_hint(repo_root, task_json_path.parent, "finish")
     return 0
 
 

@@ -30,6 +30,10 @@ from .git import branch_exists_locally
 from .io import read_json
 from .log import Colors, colored
 from .paths import DIR_ARCHIVE, DIR_TASKS, DIR_WORKFLOW, FILE_TASK_JSON, get_repo_root
+from .shared_spec_cache import (
+    is_shared_spec_reference,
+    resolve_shared_spec_reference,
+)
 from .task_utils import resolve_task_dir
 
 # Extensions that look like code rather than spec/research docs. Entries with
@@ -90,6 +94,14 @@ def cmd_add_context(args: argparse.Namespace) -> int:
 
     jsonl_file = target_dir / jsonl_name
     full_path = repo_root / path
+    if not full_path.exists() and is_shared_spec_reference(path):
+        resolved_shared = resolve_shared_spec_reference(
+            path,
+            repo_root,
+            task_dir=target_dir,
+        )
+        if resolved_shared is not None:
+            full_path = resolved_shared
 
     entry_type = "file"
     if full_path.is_dir():
@@ -223,6 +235,12 @@ def _resolve_context_entry_path(
     ``None`` means the remapped path traversed or resolved outside that archive.
     """
     repo_path = repo_root / file_path
+    if not repo_path.exists() and is_shared_spec_reference(file_path):
+        return resolve_shared_spec_reference(
+            file_path,
+            repo_root,
+            task_dir=task_dir,
+        )
     if task_dir is None:
         return repo_path
 

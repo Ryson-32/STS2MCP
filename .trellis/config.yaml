@@ -87,6 +87,7 @@ update:
     - ".codex/hooks.json"
     - ".claude/hooks/inject-subagent-context.py"
 
-registry:
-  spec:
-    source: gh:Ryson-32/trellis-shared-spec/spec#main
+shared_specs:
+  registry: https://github.com/Ryson-32/trellis-shared-spec.git
+  ref: main
+  path: spec/shared
