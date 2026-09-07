@@ -1053,6 +1053,34 @@ Active task: {task_dir or ACTIVE_TASK_NONE}
 {context}"""
 
 
+def build_codex_task_fallback_context(
+    subagent_type: str,
+    shared_context: str,
+) -> str:
+    """Tell a native implement/check child to use its explicit task header."""
+    role = subagent_type.removeprefix("trellis-")
+    verified_context = shared_context or (
+        "No shared-spec context was available from the hook repository."
+    )
+    return f"""# Trellis Native {role.title()} Subagent: Task Fallback Required
+
+The parent session has no active task in this hook repository. Codex's native
+`SubagentStart` event does not include the dispatch prompt, so this hook cannot
+resolve an explicit cross-repository task path from that event.
+
+Use only the `Active task: <path>` line in your dispatch prompt as the task
+artifact location. That path may be absolute; it does not change the assigned
+repository or worktree used as the command workdir. Before any persistent write,
+validate the explicit task and the shared-spec version that applies there, using
+the target repository's resolver when needed. Do not infer a task, borrow another
+session's task, or treat the current repository context below as write
+authorization.
+
+## Verified Hook-Repository Context
+
+{verified_context}"""
+
+
 def _shared_specs_declared(repo_root: str) -> bool:
     try:
         config = Path(repo_root) / DIR_WORKFLOW / "config.yaml"
@@ -1126,9 +1154,35 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         platform="codex",
         allow_single_session_fallback=False,
         allow_environment_context=False,
-        require_existing=False,
+        require_existing=True,
     )
-    if not task_dir and subagent_type != AGENT_RESEARCH:
+    if not task_dir and subagent_type == AGENT_RESEARCH:
+        # Preserve the distinction between no parent task (valid read-only
+        # direct delivery) and a stale task pointer (fail closed). The strict
+        # lookup above intentionally hides stale paths from implement/check.
+        unresolved_task = get_current_task(
+            repo_root,
+            {"session_id": parent_session_id},
+            platform="codex",
+            allow_single_session_fallback=False,
+            allow_environment_context=False,
+            require_existing=False,
+        )
+        if unresolved_task:
+            return
+    if not task_dir and subagent_type in AGENTS_REQUIRE_TASK:
+        shared_context = _shared_spec_context_text(
+            repo_root, input_data, None, allow_remote=False
+        )
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "SubagentStart",
+                "additionalContext": build_codex_task_fallback_context(
+                    subagent_type, shared_context
+                ),
+            }
+        }
+        print(json.dumps(output, ensure_ascii=False))
         return
 
     if task_dir:

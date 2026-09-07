@@ -214,7 +214,12 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _build_manifest(snapshot: Path, config: SharedSpecConfig, sha: str) -> dict[str, Any]:
+def _build_manifest(
+    snapshot: Path,
+    config: SharedSpecConfig,
+    sha: str,
+    source_tree: str,
+) -> dict[str, Any]:
     source_root = snapshot.joinpath(*PurePosixPath(config.path).parts)
     if not (source_root / "index.md").is_file():
         raise ValueError("shared spec snapshot has no index.md")
@@ -232,7 +237,13 @@ def _build_manifest(snapshot: Path, config: SharedSpecConfig, sha: str) -> dict[
         files[relative] = _file_hash(path)
     if not files:
         raise ValueError("shared spec snapshot is empty")
-    return {"schema": 1, "sha": sha, "source_path": config.path, "files": files}
+    return {
+        "schema": 2,
+        "sha": sha,
+        "source_path": config.path,
+        "source_tree": source_tree,
+        "files": files,
+    }
 
 
 def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None, str | None]:
@@ -242,11 +253,21 @@ def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None,
     manifest = _read_json(snapshot / MANIFEST_FILE)
     if not manifest:
         return None, "shared-spec snapshot manifest is missing or unreadable"
-    if manifest.get("schema") != 1 or manifest.get("sha") != sha or manifest.get("source_path") != config.path:
+    schema = manifest.get("schema")
+    if schema not in (1, 2) or manifest.get("sha") != sha or manifest.get("source_path") != config.path:
         return None, "shared-spec snapshot manifest does not match the configured source"
     expected = manifest.get("files")
     if not isinstance(expected, dict) or not expected:
         return None, "shared-spec snapshot manifest has no files"
+    # Schema 1 snapshots remain usable only when the local Git object cache can
+    # independently reproduce their complete archived file set and bytes.
+    source_tree, source_files, source_error = _git_source_manifest(config, sha)
+    if source_error:
+        return None, source_error
+    if schema == 2 and manifest.get("source_tree") != source_tree:
+        return None, "shared-spec snapshot manifest does not match the recorded Git tree"
+    if expected != source_files:
+        return None, "shared-spec snapshot manifest does not match the recorded Git source"
     try:
         actual_paths = {
             path.relative_to(snapshot).as_posix()
@@ -335,6 +356,74 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, *, binary: bool = 
     )
 
 
+def _source_tree_id(config: SharedSpecConfig, sha: str) -> tuple[str | None, str | None]:
+    git_dir = _registry_dir(config) / "objects.git"
+    if not (git_dir / "HEAD").is_file():
+        return None, "shared-spec Git object cache is missing"
+    try:
+        commit_type = _run_git(["cat-file", "-t", sha], git_dir, ARCHIVE_TIMEOUT_SECONDS)
+        if commit_type.returncode != 0 or commit_type.stdout.strip() != "commit":
+            return None, "recorded shared-spec revision is not a Git commit"
+        resolved = _run_git(
+            ["rev-parse", f"{sha}:{config.path}"],
+            git_dir,
+            ARCHIVE_TIMEOUT_SECONDS,
+        )
+        tree = resolved.stdout.strip().lower() if resolved.returncode == 0 else ""
+        if not SHA_RE.fullmatch(tree):
+            return None, "recorded shared-spec commit or path is unavailable in the Git object cache"
+        object_type = _run_git(["cat-file", "-t", tree], git_dir, ARCHIVE_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "recorded shared-spec Git tree validation failed"
+    if object_type.returncode != 0 or object_type.stdout.strip() != "tree":
+        return None, "recorded shared-spec source is not a Git tree"
+    return tree, None
+
+
+def _git_source_manifest(
+    config: SharedSpecConfig,
+    sha: str,
+) -> tuple[str | None, dict[str, str] | None, str | None]:
+    """Return the Git tree and digests using snapshot materialization semantics."""
+    source_tree, tree_error = _source_tree_id(config, sha)
+    if source_tree is None:
+        return None, None, tree_error
+
+    git_dir = _registry_dir(config) / "objects.git"
+    try:
+        archived = _run_git(
+            ["-c", "core.autocrlf=false", "archive", "--format=tar", sha, "--", config.path],
+            git_dir,
+            ARCHIVE_TIMEOUT_SECONDS,
+            binary=True,
+        )
+        if archived.returncode != 0 or not archived.stdout:
+            return None, None, "recorded shared-spec Git source could not be archived"
+        files: dict[str, str] = {}
+        with tarfile.open(fileobj=io.BytesIO(archived.stdout), mode="r:") as archive:
+            for member in archive.getmembers():
+                member_path = PurePosixPath(member.name)
+                if (
+                    member.issym()
+                    or member.islnk()
+                    or not (member.isdir() or member.isreg())
+                    or member_path.is_absolute()
+                    or ".." in member_path.parts
+                ):
+                    return None, None, "recorded shared-spec Git archive contains an unsafe member"
+                if not member.isreg():
+                    continue
+                stream = archive.extractfile(member)
+                if stream is None:
+                    return None, None, "recorded shared-spec Git archive could not be read"
+                files[member_path.as_posix()] = hashlib.sha256(stream.read()).hexdigest()
+    except (OSError, subprocess.TimeoutExpired, tarfile.TarError):
+        return None, None, "recorded shared-spec Git source validation failed"
+    if not files:
+        return None, None, "recorded shared-spec Git source is empty"
+    return source_tree, files, None
+
+
 def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
     registry_dir = _registry_dir(config)
     with _SourceLock(registry_dir / "update.lock") as acquired:
@@ -363,6 +452,10 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
         sha = resolved.stdout.strip().lower() if resolved.returncode == 0 else ""
         if not SHA_RE.fullmatch(sha):
             return None, "shared-spec registry returned an invalid commit"
+
+        source_tree, tree_error = _source_tree_id(config, sha)
+        if source_tree is None:
+            return None, tree_error or "shared-spec registry returned an invalid source tree"
 
         existing, existing_error = _validate_snapshot(config, sha)
         if existing is None and existing_error and _snapshot_dir(config, sha).exists():
@@ -399,7 +492,7 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
                         ):
                             raise ValueError("unsafe shared-spec archive member")
                     archive.extractall(temp, members=members)
-                manifest = _build_manifest(temp, config, sha)
+                manifest = _build_manifest(temp, config, sha, source_tree)
                 (temp / MANIFEST_FILE).write_text(
                     json.dumps(manifest, sort_keys=True, ensure_ascii=False) + "\n",
                     encoding="utf-8",
@@ -641,7 +734,7 @@ def ensure_shared_spec_context(
                 return _blocked("A concurrent session pin conflicts with the inherited task-family pin.")
 
         remote_error = None
-        if allow_remote and not attempted:
+        if allow_remote and not attempted and family_sha is None:
             _, remote_error = _fetch_snapshot(config)
             _atomic_write_json(attempt_path, {"attempted": True})
         index_path, owners, routes = _owners(config, pinned_sha)

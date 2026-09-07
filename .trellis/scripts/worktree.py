@@ -23,20 +23,35 @@ from common.worktree import (
 )
 
 
+def _validated_task_dir(candidate: Path | None, repo: Path) -> Path | None:
+    """Return a task path only when its physical location is under tasks/."""
+    if candidate is None:
+        return None
+    tasks = get_tasks_dir(repo)
+    try:
+        resolved = candidate.resolve()
+        tasks_resolved = tasks.resolve()
+    except (OSError, RuntimeError):
+        return None
+    if resolved == tasks_resolved or tasks_resolved not in resolved.parents:
+        return None
+    if not resolved.is_dir() or not (resolved / "task.json").is_file():
+        return None
+    return tasks / resolved.relative_to(tasks_resolved)
+
+
 def _task_dir(value: str, repo: Path) -> Path | None:
     raw = Path(os.path.abspath(os.path.expanduser(value)))
-    tasks = get_tasks_dir(repo).resolve()
     if raw.is_dir() and (raw / "task.json").is_file():
-        try:
-            raw.resolve().relative_to(tasks)
-            return raw
-        except ValueError:
-            return None
-    resolved = resolve_task_dir(value, repo)
-    if resolved:
+        return _validated_task_dir(raw, repo)
+    resolved = _validated_task_dir(resolve_task_dir(value, repo), repo)
+    if resolved is not None:
         return resolved
+    tasks = get_tasks_dir(repo)
     matches = list((tasks / "archive").glob(f"*/*{value}")) if (tasks / "archive").is_dir() else []
-    return matches[0] if len(matches) == 1 and (matches[0] / "task.json").is_file() else None
+    validated = [_validated_task_dir(match, repo) for match in matches]
+    valid_matches = [match for match in validated if match is not None]
+    return valid_matches[0] if len(valid_matches) == 1 else None
 
 
 def _path_json(value):

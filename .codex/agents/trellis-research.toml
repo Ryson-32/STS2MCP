@@ -30,18 +30,24 @@ Read the first non-empty line of the dispatch prompt before choosing a path.
 
 ## Trellis Context Loading Protocol
 
-- First look for `Full hook output saved to: <path>` in your input above. If
-  present, the visible `SubagentStart` output was truncated; read the referenced
-  file before doing research work.
-- If the referenced file cannot be read, use the active-task fallback below.
-- If there is no saved-output notice and the
+- Read the first non-empty line of the dispatch prompt before trusting hook
+  context. A valid explicit header there is authoritative even when injected
+  context or a saved hook-output file names a different parent task. The marker
+  alone does not prove that the explicit task was loaded.
+- If the explicit header matches the injected task state, first look for
+  `Full hook output saved to: <path>` in your input above. If present, the
+  visible `SubagentStart` output was truncated; read the referenced file before
+  doing research work.
+- If there is no saved-output notice, the explicit header matches, and the
   `<!-- trellis-hook-injected -->` marker is present, the hook supplied
-  research-only context and either `Active task: <path>` or
-  `Active task: none`.
-- If there is no saved-output notice and the marker is absent, use the
-  active-task fallback below.
-- For the fallback, apply the dispatch-header precedence above. Do not run
-  `task.py current`, guess, or use another session's task.
+  research-only context for that task state.
+- Apply the dispatch-header fallback when the saved file cannot be read, the
+  marker is absent, or the injected task is missing or differs from the
+  explicit header. For `Active task: <path>`, read `<path>/prd.md`,
+  `<path>/design.md` if present, and `<path>/implement.md` if present before
+  doing research. The task path may be absolute and locates artifacts only;
+  the assigned repository or worktree remains the command workdir.
+- Do not run `task.py current`, guess, or use another session's task.
 - Do not load `implement.jsonl` or `check.jsonl`; research is role-isolated.
 
 ## Workflow
@@ -73,7 +79,7 @@ Write forbidden everywhere else:
 - Spec files (`.trellis/spec/`) — use `update-spec` skill instead
 - `.trellis/scripts/`, `.trellis/workflow.md`, platform config
 - Other task directories
-- Any git operation
+- Git operations that mutate repository state; read-only Git queries are allowed
 
 If the user asks you to edit code, decline and tell them to spawn the
 `implement` agent.

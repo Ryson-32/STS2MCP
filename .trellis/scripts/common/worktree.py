@@ -23,6 +23,7 @@ from typing import Callable, Iterator, Sequence
 from .config import get_worktree_branch_prefix, get_worktree_root
 from .git import main_worktree_root
 from .io import read_json_checked, write_json
+from .paths import get_tasks_dir
 
 
 @dataclass
@@ -58,8 +59,11 @@ class LifecycleOutcome:
 
 
 def _run_git(repo: Path, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    command = ["git"]
+    if os.name == "nt":
+        command += ["-c", "core.longpaths=true"]
     return subprocess.run(
-        ["git", *args], cwd=repo, text=True, encoding="utf-8",
+        [*command, *args], cwd=repo, text=True, encoding="utf-8",
         errors="replace", capture_output=True, check=False,
     )
 
@@ -360,12 +364,240 @@ def _managed_record(repo: Path, task_dir: Path, target: Path) -> dict | None:
     return None
 
 
-def _has_external_record(task_dir: Path, target: Path) -> bool:
-    data, _ = _task_data(task_dir)
+def _ownership_scan_error(action: str, path: Path, error: BaseException | None = None) -> RuntimeError:
+    detail = f": {error}" if error else ""
+    return RuntimeError(f"task ownership scan incomplete; could not {action} '{path}'{detail}")
+
+
+def _ownership_task_stores(repo: Path) -> Iterator[Path]:
+    """Yield each physical task store visible from this Git repository."""
+    result = _run_git(repo, ["worktree", "list", "--porcelain", "-z"])
+    if result.returncode:
+        detail = result.stderr.strip() or "git worktree list failed"
+        raise _ownership_scan_error("enumerate registered checkouts for", repo, RuntimeError(detail))
+    roots: list[Path] = []
+    for token in result.stdout.split("\0"):
+        key, _, value = token.partition(" ")
+        if key == "worktree":
+            if not value:
+                raise _ownership_scan_error("read a registered checkout path from", repo)
+            roots.append(_absolute(Path(value)))
+    if not roots:
+        raise _ownership_scan_error("find a registered checkout for", repo)
+
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            root_info = root.stat()
+        except (OSError, RuntimeError) as exc:
+            raise _ownership_scan_error("inspect registered checkout", root, exc) from exc
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise _ownership_scan_error("use non-directory registered checkout", root)
+        tasks = get_tasks_dir(root)
+        try:
+            info = tasks.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise _ownership_scan_error("inspect task store", tasks, exc) from exc
+        if not stat.S_ISDIR(info.st_mode):
+            raise _ownership_scan_error("use non-directory task store", tasks)
+        try:
+            resolved = tasks.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise _ownership_scan_error("resolve task store", tasks, exc) from exc
+        key = _path_key(resolved)
+        if key not in seen:
+            seen.add(key)
+            yield tasks
+
+
+def _scan_directory(path: Path, action: str) -> list[Path]:
+    try:
+        return sorted(path.iterdir(), key=lambda entry: entry.name)
+    except (OSError, RuntimeError) as exc:
+        raise _ownership_scan_error(action, path, exc) from exc
+
+
+def _scan_candidate(candidate: Path, tasks_resolved: Path, *, require_registry: bool = True) -> Path | None:
+    try:
+        info = candidate.lstat()
+    except (OSError, RuntimeError) as exc:
+        raise _ownership_scan_error("inspect task candidate", candidate, exc) from exc
+    attrs = getattr(info, "st_file_attributes", 0)
+    if stat.S_ISLNK(info.st_mode) or bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+        raise _ownership_scan_error("follow linked task candidate", candidate)
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise _ownership_scan_error("resolve task candidate", candidate, exc) from exc
+    if resolved == tasks_resolved or tasks_resolved not in resolved.parents:
+        raise _ownership_scan_error("validate task candidate containment for", candidate)
+    if not require_registry:
+        return candidate
+    task_json = resolved / "task.json"
+    try:
+        task_info = task_json.stat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _ownership_scan_error("inspect task registry", task_json, exc) from exc
+    if not stat.S_ISREG(task_info.st_mode):
+        raise _ownership_scan_error("use non-file task registry", task_json)
+    return candidate
+
+
+def _iter_task_dirs(repo: Path) -> Iterator[Path]:
+    """Yield all task directories, or raise when ownership cannot be scanned completely."""
+    for tasks in _ownership_task_stores(repo):
+        try:
+            tasks_resolved = tasks.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise _ownership_scan_error("resolve task store", tasks, exc) from exc
+        candidates: list[Path] = []
+        for entry in _scan_directory(tasks, "enumerate task store"):
+            if entry.name != "archive":
+                candidates.append(entry)
+                continue
+            archive = _scan_candidate(entry, tasks_resolved, require_registry=False)
+            if archive is None:
+                continue
+            for month in _scan_directory(archive, "enumerate task archive"):
+                checked_month = _scan_candidate(month, tasks_resolved, require_registry=False)
+                if checked_month is None:
+                    continue
+                candidates.extend(_scan_directory(checked_month, "enumerate task archive month"))
+        for candidate in candidates:
+            checked = _scan_candidate(candidate, tasks_resolved)
+            if checked is not None:
+                yield checked
+
+
+def _task_relative_path(task_dir: Path) -> str | None:
+    """Return a task-store-relative identity using its explicit tasks/ base."""
+    for tasks in task_dir.parents:
+        if tasks.name != "tasks" or tasks.parent.name != ".trellis":
+            continue
+        try:
+            relative = task_dir.resolve().relative_to(tasks.resolve())
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return relative.as_posix() if relative.parts else None
+    return None
+
+
+def _based_path_key(value: str, base: Path) -> str | None:
+    """Normalize a stored path against an explicit base with host semantics."""
+    try:
+        path = Path(value)
+        return _path_key(path if path.is_absolute() else base / path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _ownership_registry(task_dir: Path) -> tuple[list[dict] | None, str | None, str | None]:
+    """Read ownership-bearing fields without treating malformed data as unowned."""
+    data, path = _task_data(task_dir)
     if data is None:
-        return False
+        return None, None, f"task registry '{path}' is unreadable; ownership cannot be established"
+    value = data.get("worktrees", [])
+    if (
+        not isinstance(value, list)
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("path"), str)
+            or not row["path"].strip()
+            for row in value
+        )
+    ):
+        return None, None, f"task registry '{path}' has invalid worktree metadata; ownership cannot be established"
+    scalar = data.get("worktree_path")
+    if scalar is not None and not isinstance(scalar, str):
+        return None, None, f"task registry '{path}' has invalid legacy worktree metadata; ownership cannot be established"
+    legacy = scalar.strip() if isinstance(scalar, str) and scalar.strip() else None
+    return [dict(row) for row in value], legacy, None
+
+
+def _current_adoption_state(repo: Path, task_dir: Path, target: Path) -> tuple[bool, bool, str | None]:
+    """Return managed/external state from one validated current-registry read."""
+    records, legacy, error = _ownership_registry(task_dir)
+    if error or records is None:
+        return False, False, error
+    if legacy is not None and _based_path_key(legacy, repo) is None:
+        return False, False, "current task legacy worktree path could not be normalized before adoption"
     key = _path_key(target)
-    return any(isinstance(row.get("path"), str) and _path_key(Path(row["path"])) == key for row in _records(data))
+    common = _common_git_dir(repo)
+    if common is None:
+        return False, False, "repository identity could not be established before adoption"
+    common_key = _path_key(common)
+    record_keys = [_based_path_key(row["path"], repo) for row in records]
+    if any(record_key is None for record_key in record_keys):
+        return False, False, "current task worktree path could not be normalized before adoption"
+    matching = [row for row, record_key in zip(records, record_keys) if record_key == key]
+    managed = any(
+        row.get("managed") is True
+        and isinstance(row.get("owner"), str) and bool(row["owner"].strip())
+        and isinstance(row.get("common_git_dir"), str)
+        and _based_path_key(row["common_git_dir"], repo) == common_key
+        for row in matching
+    )
+    return managed, bool(matching), None
+
+
+def _other_task_claim(repo: Path, task_dir: Path, target: Path) -> str | None:
+    """Describe a valid managed/external claim held by another task."""
+    common = _common_git_dir(repo)
+    if common is None:
+        return "repository identity could not be established before adoption"
+    current_relative = _task_relative_path(task_dir)
+    if current_relative is None:
+        return "current task identity could not be established before adoption"
+    target_key = _path_key(target)
+    common_key = _path_key(common)
+    try:
+        for candidate in _iter_task_dirs(repo):
+            candidate_relative = _task_relative_path(candidate)
+            if candidate_relative is None:
+                return f"task ownership scan incomplete; identity could not be established for '{candidate}'"
+            if candidate_relative == current_relative:
+                continue
+            records, legacy, error = _ownership_registry(candidate)
+            if error or records is None:
+                return error
+            task_name = candidate_relative
+            if legacy is not None:
+                legacy_key = _based_path_key(legacy, repo)
+                if legacy_key is None:
+                    return f"task ownership scan incomplete; legacy path in task '{task_name}' could not be normalized"
+                if legacy_key == target_key:
+                    return f"another task '{task_name}' has incomplete legacy ownership metadata for this worktree"
+            for row in records:
+                row_path = row.get("path")
+                if not isinstance(row_path, str):
+                    continue
+                row_key = _based_path_key(row_path, repo)
+                if row_key is None:
+                    return f"task ownership scan incomplete; path in task '{task_name}' could not be normalized"
+                if row_key != target_key:
+                    continue
+                owner = row.get("owner")
+                managed = row.get("managed")
+                recorded_common = row.get("common_git_dir")
+                if (
+                    not isinstance(owner, str)
+                    or not owner.strip()
+                    or (managed is not True and managed is not False)
+                    or not isinstance(recorded_common, str)
+                    or _based_path_key(recorded_common, repo) != common_key
+                ):
+                    return f"another task '{task_name}' has incomplete ownership metadata for this worktree"
+                kind = "managed" if managed is True else "external"
+                return f"another task '{task_name}' already records this worktree as {kind} (owner: {owner.strip()})"
+    except RuntimeError as exc:
+        return str(exc)
+    return None
 
 
 def _record(repo: Path, task_dir: Path, target: Path, branch: str | None, owner: str, adopted: bool = False) -> bool:
@@ -440,11 +672,17 @@ def move_worktree(
         return LifecycleOutcome("preserved", source, "worktree is dirty or could not be inspected")
     if before.unsafe_link or _path_chain_has_link(source) or not before.exists or not before.registered or not before.same_repository:
         return LifecycleOutcome("preserved", source, "source failed exact physical, registration, link, or repository checks")
-    if _managed_record(repo, task_dir, source) is None:
-        if _has_external_record(task_dir, source):
+    managed, external, registry_error = _current_adoption_state(repo, task_dir, source)
+    if registry_error:
+        return LifecycleOutcome("preserved", source, registry_error)
+    if not managed:
+        if external:
             return LifecycleOutcome("preserved", source, "task metadata marks the source external or lacks verified ownership")
         if not adopt_owned:
             return LifecycleOutcome("preserved", source, "source is not task-owned; --adopt-owned is required")
+        claim = _other_task_claim(repo, task_dir, source)
+        if claim:
+            return LifecycleOutcome("preserved", source, claim)
     configured_root = _absolute(get_worktree_root(repo))
     if not _is_within(destination, configured_root) or destination.exists() or _registration(repo, destination)[0] or _path_chain_has_link(destination):
         return LifecycleOutcome("preserved", destination, "destination already exists, is registered, or is a link")
@@ -458,8 +696,14 @@ def move_worktree(
             locked = inspect_worktree(repo, source)
             if locked.dirty or locked.errors or locked.primary or locked.unsafe_link or not locked.exists or not locked.registered or not locked.same_repository:
                 return LifecycleOutcome("preserved", source, "source changed before move; re-inspection refused it")
-            if _managed_record(repo, task_dir, source) is None:
-                if _has_external_record(task_dir, source) or not adopt_owned:
+            managed, external, registry_error = _current_adoption_state(repo, task_dir, source)
+            if registry_error:
+                return LifecycleOutcome("preserved", source, f"source ownership changed before move: {registry_error}")
+            if not managed:
+                claim = _other_task_claim(repo, task_dir, source) if adopt_owned else None
+                if external or not adopt_owned or claim:
+                    if claim:
+                        return LifecycleOutcome("preserved", source, f"source ownership changed before move: {claim}")
                     return LifecycleOutcome("preserved", source, "source ownership changed before move")
             if not _is_within(destination, configured_root) or destination.exists() or _registration(repo, destination)[0] or _path_chain_has_link(destination):
                 return LifecycleOutcome("preserved", destination, "destination changed before move")
@@ -537,11 +781,17 @@ def _cleanup_preflight(
         return item, [], "target failed exact physical, registration, link, or repository checks"
     if item.errors:
         return item, [], "worktree inspection failed"
-    if _managed_record(repo, task_dir, target) is None:
-        if _has_external_record(task_dir, target):
+    managed, external, registry_error = _current_adoption_state(repo, task_dir, target)
+    if registry_error:
+        return item, [], registry_error
+    if not managed:
+        if external:
             return item, [], "task metadata marks the target external or lacks verified ownership"
         if not adopt_owned:
             return item, [], "target is not task-owned; --adopt-owned is required"
+        claim = _other_task_claim(repo, task_dir, target)
+        if claim:
+            return item, [], claim
     if item.dirty:
         return item, [], "tracked or untracked changes are present"
     if item.detached and not _named_ref_matches(repo, recovery_ref, item.head):
