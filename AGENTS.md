@@ -50,7 +50,7 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 | 项目明确采用此作者语气，且进行学术起草、润色或语气校准时 | [作者学术语气](.trellis/spec/shared/language-author-academic.md) |
 | Mac/Windows 开工、交接、提交或同步时 | [双端 Git 协作](.trellis/spec/shared/cross-device-git.md) |
 | 仓库跟踪外部上游并长期保留本地或私有偏离时 | [上游跟踪与分叉治理](.trellis/spec/shared/upstream-fork-governance.md) |
-| 选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
+| 任务规划、方案设计、选择或启动子代理/外部 AI worker、判断上下文复用、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 | [子代理与外部 AI Worker 编排](.trellis/spec/shared/subagent-orchestration.md) |
 | 使用原生子代理以外的 Channel worker、可见交互式 runtime、浏览器/桌面执行器或其它外部 AI 控制面时 | [外部 AI 执行器生命周期](.trellis/spec/shared/external-executor-lifecycle.md) |
 | 更新 Trellis、处理跟踪/忽略或 Registry 时 | [Trellis 项目状态](.trellis/spec/shared/trellis-project-state.md) |
 | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 | [长期知识沉淀](.trellis/spec/shared/durable-knowledge.md) |

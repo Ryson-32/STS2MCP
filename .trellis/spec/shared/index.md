@@ -27,7 +27,7 @@
 | [作者学术语气](language-author-academic.md) | 项目明确采用此作者语气，且进行学术起草、润色或语气校准时 |
 | [双端 Git 协作](cross-device-git.md) | Mac/Windows 开工、交接、提交或同步时 |
 | [上游跟踪与分叉治理](upstream-fork-governance.md) | 仓库跟踪外部上游并长期保留本地或私有偏离时 |
-| [子代理与外部 AI Worker 编排](subagent-orchestration.md) | 选择或启动子代理/外部 AI worker、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 |
+| [子代理与外部 AI Worker 编排](subagent-orchestration.md) | 任务规划、方案设计、选择或启动子代理/外部 AI worker、判断上下文复用、划分并行目标与基线、判断模型/provider/effort 或处理中断恢复时 |
 | [外部 AI 执行器生命周期](external-executor-lifecycle.md) | 使用原生子代理以外的 Channel worker、可见交互式 runtime、浏览器/桌面执行器或其它外部 AI 控制面时 |
 | [Trellis 项目状态](trellis-project-state.md) | 更新 Trellis、处理跟踪/忽略或 Registry 时 |
 | [长期知识沉淀](durable-knowledge.md) | 工作中出现或用户提出可复用经验、长期指令、设计原则、验收边界或稳定偏好时 |
@@ -46,7 +46,7 @@
 
 - Trellis 阶段、任务是否创建、JSONL 上下文清单和批准逻辑：由当前 `.trellis/workflow.md` 管理。
 - Codex、Claude、Cursor 等单个平台的模型、推理强度、hook 和权限：由对应项目级平台配置管理。
-- 子代理的通用角色、上下文交接、模型/provider/effort 决策参考、worktree 隔离、并发和中断恢复由上表“子代理与外部 AI Worker 编排”管理；真实能力由当前平台/能力 owner 提供，项目只补充本项目特有边界。
+- 子代理的通用角色、上下文交接与复用、模型/provider/effort 决策参考、Pro 默认规划、worktree 隔离、并发和中断恢复由上表“子代理与外部 AI Worker 编排”管理；真实能力由当前平台/能力 owner 提供，项目只补充本项目特有边界。
 - 原生子代理以外的外部执行器选择、精确运行身份、完成证据、受控重选和资源回收由上表“外部 AI 执行器生命周期”管理。
 - 私有/公开仓库的默认 commit/push 授权边界由上表“权限与变更安全”管理；具体 remote、branch、main-only、PR-only、部署、发布和 tag 策略留在当前项目。
 - 论文数据、图件、Word、业务 API、数据库、UI、生产，以及具体上游地址、分支策略、差异清单和发布部署合同：留在拥有它们的项目规范中。
