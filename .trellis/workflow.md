@@ -231,7 +231,7 @@ Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-bef
      therefore reminds the agent to validate, capture durable knowledge when
      it exists, and finish within the repository's commit authority. -->
 
-Sub-agent dispatch protocol applies to all platforms and all sub-agents, including native Codex `SubagentStart` context injection with child-side pull fallback, class-2 Gemini/Qoder/Copilot/Reasonix/Trae/Grok/Kimi Code, hook-backed ZCode/Snow, and `trellis-research`: every dispatch prompt starts with `Active task: <task path from task.py current>` before role-specific instructions. On Grok Build, use `spawn_subagent` with `subagent_type` set to the Trellis agent name (e.g. `trellis-implement`). On Kimi Code, dispatch the built-in `coder` / `explore` sub-agent with the matching `.kimi-code/skills/trellis-<role>/SKILL.md` instructions.
+Sub-agent dispatch protocol applies to all platforms and all sub-agents, including native Codex `SubagentStart` context injection with child-side pull fallback and `trellis-research`: task-backed dispatch starts with `Active task: <task path>` before role-specific instructions. A small, self-contained, one-shot read-only research question may instead use `Active task: none` and return findings directly; do not create a task or report solely for that exchange. Persistent research and implementation/check work retain their task-context requirements. On Grok Build, use `spawn_subagent` with `subagent_type` set to the Trellis agent name (e.g. `trellis-implement`). On Kimi Code, dispatch the built-in `coder` / `explore` sub-agent with the matching `.kimi-code/skills/trellis-<role>/SKILL.md` instructions.
 
 [workflow-state:in_progress]
 Tools: `trellis-implement` / `trellis-research` are sub-agent roles, not skills. `trellis-check` may be an agent or inline skill; `trellis-update-spec` is a skill.
@@ -357,30 +357,36 @@ Return to this step whenever requirements change and revise the relevant artifac
 
 Research can happen at any time during requirement exploration. It isn't limited to local code — you can use any available tool (MCP servers, skills, web search, etc.) to look up external information, including third-party library docs, industry practices, API references, etc.
 
+Choose the delivery by how the evidence will be used:
+
+- A fully self-contained, bounded, one-shot read-only search may be delivered directly. Use `Active task: none` when dispatching it without a task, create no task or report file just for the dispatch, and return the precise conclusion, `file:line` or external source, actual search scope including negative-search coverage, and remaining uncertainty.
+- Research that must survive compaction or handoff, supplies scientific or design evidence, will be cited by later implementation, spans sessions, or was requested as a file belongs to an explicit task's `research/` directory.
+- A valid explicit task path takes precedence over current session state. A valid task path supplies task context and a validated durable-output boundary; it does not by itself require a file. `Active task: none` forbids borrowing current session state. With no header, use genuine injected/current task context when available; without it, direct delivery is valid only for fully self-contained read-only work. A malformed header or invalid/out-of-scope task path never authorizes a write or fallback to another task.
+
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
 Spawn the research sub-agent:
 
 - **Agent type**: `trellis-research`
 - **Task description**: Research <specific question>
-- **Key requirement**: Research output MUST be persisted to `{TASK_DIR}/research/`
+- **Dispatch header**: `Active task: none` for explicit no-task read-only delivery, or `Active task: <task path>` to keep genuine task context and a validated durable-output boundary
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
 [codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
-Do the research in the main session directly and write findings into `{TASK_DIR}/research/`. `codex-inline` is the explicit mode that keeps work in the main session.
+Do the research in the main session directly. Apply the same lightweight-versus-persisted delivery rule above; `codex-inline` is the explicit mode that keeps work in the main session.
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
-**Research artifact conventions**:
+**Persisted research artifact conventions**:
 - One file per research topic (e.g. `research/auth-library-comparison.md`)
 - Record third-party library usage examples, API references, version constraints in files
 - Note relevant spec file paths you discovered for later reference
 
 Brainstorm and research can interleave freely — pause to research a technical question, then return to talk with the user.
 
-**Key principle**: Research output must be written to files, not left only in the chat. Conversations get compacted; files don't.
+**Key principle**: Persist evidence that future work must recover. Keep bounded one-shot findings in the direct reply when no later consumer needs an artifact.
 
 #### 1.3 Configure context `[optional · once]`
 
@@ -536,7 +542,7 @@ Small/local changes do not require a whole-repository test merely because one ex
 
 - `check` reveals a prd defect → return to Phase 1, fix `prd.md`, then redo 2.1
 - Implementation went wrong → revert code, redo 2.1
-- Need more research → research (same as Phase 1.2), write findings into `research/`
+- Need more research → research (same as Phase 1.2), use direct delivery or task `research/` according to its persistence needs
 
 ---
 

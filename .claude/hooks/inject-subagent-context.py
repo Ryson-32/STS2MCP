@@ -71,6 +71,9 @@ AGENTS_REQUIRE_TASK = (AGENT_IMPLEMENT, AGENT_CHECK)
 # All supported agents
 AGENTS_ALL = (AGENT_IMPLEMENT, AGENT_CHECK, AGENT_RESEARCH)
 
+ACTIVE_TASK_PREFIX = "Active task:"
+ACTIVE_TASK_NONE = "none"
+
 
 def find_repo_root(start_path: str) -> str | None:
     """
@@ -763,8 +766,7 @@ def get_research_context(repo_root: str, task_dir: str | None) -> str:
     """
     Context for Research Agent — project structure overview for spec directories.
 
-    `task_dir` kept for signature parity with get_implement_context / get_check_context
-    so the dispatcher can call them uniformly.
+    `task_dir` selects persisted task research or lightweight direct delivery.
     """
     _ = task_dir
     context_parts = []
@@ -801,6 +803,25 @@ To get structured package info, run: `python ./{DIR_WORKFLOW}/scripts/get_contex
 - Tech solutions: Use mcp__exa__web_search_exa or mcp__exa__get_code_context_exa"""
 
     context_parts.append(project_structure)
+
+    if task_dir:
+        context_parts.append(
+            "## Research Delivery\n\n"
+            f"Task context is available at `{task_dir}`. Return a bounded "
+            "one-shot conclusion directly when no later consumer needs an "
+            "artifact. Persist scientific, design, multi-session, "
+            "later-consumed, or user-requested evidence only under "
+            f"`{task_dir}/research/`."
+        )
+    else:
+        context_parts.append(
+            "## Research Delivery\n\n"
+            "Active task: none\n\n"
+            "This path is read-only. Return the conclusion directly with exact "
+            "file:line or external sources, the actual search scope including "
+            "negative-search coverage, and remaining uncertainty. Do not create "
+            "a task or report file for this dispatch."
+        )
 
     return "\n\n".join(context_parts)
 
@@ -879,6 +900,72 @@ def _hook_event_name(input_data: dict) -> str:
     )
 
 
+def _active_task_header(prompt: str) -> tuple[str, str | None]:
+    """Parse the first non-empty dispatch line without inventing task state."""
+    first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
+    if not first_line:
+        return "absent", None
+    if not first_line.startswith("Active task"):
+        return "absent", None
+    if not first_line.startswith(ACTIVE_TASK_PREFIX):
+        return "malformed", None
+
+    value = first_line[len(ACTIVE_TASK_PREFIX):].strip()
+    if not value:
+        return "malformed", None
+    if value == ACTIVE_TASK_NONE:
+        return "none", None
+    return "task", value
+
+
+def _validated_task_dir(repo_root: str, task_dir: str) -> str | None:
+    """Return the canonical task ref after validating its write boundary."""
+    try:
+        scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from common.active_task import resolve_task_ref  # type: ignore[import-not-found]
+
+        root = Path(repo_root).resolve()
+        resolved = resolve_task_ref(task_dir, root)
+        if resolved is None or not resolved.is_dir():
+            return None
+
+        # `resolve_task_ref` contains the path within the repo or a symlinked
+        # `.trellis` store. This second check narrows the accepted directory to
+        # the actual task tree, so an explicit `src/` (for example) can never
+        # become a research write boundary merely because it exists.
+        tasks_real = (root / DIR_WORKFLOW / "tasks").resolve()
+        resolved.resolve().relative_to(tasks_real)
+        return resolved.relative_to(root).as_posix()
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def _resolve_dispatch_task(
+    repo_root: str,
+    input_data: dict,
+    original_prompt: str,
+    subagent_type: str,
+) -> tuple[str | None, bool]:
+    """Resolve task context with explicit dispatch headers taking precedence."""
+    header_kind, header_task = _active_task_header(original_prompt)
+    if header_kind == "malformed":
+        return None, False
+    if header_kind == "none":
+        return None, subagent_type == AGENT_RESEARCH
+    if header_kind == "task":
+        assert header_task is not None
+        validated = _validated_task_dir(repo_root, header_task)
+        return validated, validated is not None
+
+    task_dir = get_current_task(repo_root, input_data, require_existing=False)
+    if task_dir:
+        validated = _validated_task_dir(repo_root, task_dir)
+        return validated, validated is not None
+    return None, subagent_type == AGENT_RESEARCH
+
+
 def _codex_subagent_type(input_data: dict) -> str:
     """Return a Trellis Codex agent type only for a native start event."""
     if _hook_event_name(input_data) != "SubagentStart":
@@ -891,7 +978,7 @@ def _codex_subagent_type(input_data: dict) -> str:
 
 def build_codex_subagent_context(
     subagent_type: str,
-    task_dir: str,
+    task_dir: str | None,
     context: str,
 ) -> str:
     """Build developer context for a native, already-dispatched Codex role."""
@@ -903,7 +990,7 @@ You are the dispatched `{subagent_type}` role for this task. Perform that role
 directly; do not follow main-session dispatch or wait instructions, and do not
 spawn another Trellis subagent.
 
-Active task: {task_dir}
+Active task: {task_dir or ACTIVE_TASK_NONE}
 
 ## Curated Context
 
@@ -940,14 +1027,14 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         platform="codex",
         allow_single_session_fallback=False,
         allow_environment_context=False,
-        require_existing=True,
+        require_existing=False,
     )
-    if not task_dir:
+    if not task_dir and subagent_type != AGENT_RESEARCH:
         return
 
-    if subagent_type in AGENTS_REQUIRE_TASK:
-        task_dir_full = Path(repo_root) / task_dir
-        if not task_dir_full.is_dir():
+    if task_dir:
+        task_dir = _validated_task_dir(repo_root, task_dir)
+        if not task_dir:
             return
 
     if subagent_type == AGENT_IMPLEMENT:
@@ -1121,33 +1208,13 @@ def main():
     if not repo_root:
         sys.exit(0)
 
-    # Get current task directory (research doesn't require it)
-    task_dir = get_current_task(repo_root, input_data)
-
-    # implement/check need task directory
-    if subagent_type in AGENTS_REQUIRE_TASK:
-        if not task_dir:
-            sys.exit(0)
-        # Contain the pointer before reading anything through it. `task.py` now
-        # refuses to store a ref that leaves the repo, but a session file
-        # written before that fix can still hold one, and `trellis update`
-        # does not rewrite session files — so a poisoned pointer outlives the
-        # upgrade that closed the writer. This is the last hop before the
-        # task's prd.md/design.md reach the model prompt, so it checks again.
-        try:
-            root_real = os.path.realpath(repo_root)
-            # `.trellis` may itself be a symlink into a store outside the
-            # repo (#567); its real location is a second legitimate base.
-            workflow_real = os.path.realpath(os.path.join(repo_root, ".trellis"))
-            task_dir_full = os.path.realpath(os.path.join(repo_root, task_dir))
-            if not _real_path_contained(root_real, task_dir_full) and not (
-                _real_path_contained(workflow_real, task_dir_full)
-            ):
-                sys.exit(0)
-        except OSError:
-            sys.exit(0)
-        if not os.path.exists(task_dir_full):
-            sys.exit(0)
+    # An explicit header outranks session state. Research alone may select the
+    # read-only no-task path; invalid task paths fail closed for every role.
+    task_dir, dispatch_valid = _resolve_dispatch_task(
+        repo_root, input_data, original_prompt, subagent_type
+    )
+    if not dispatch_valid:
+        sys.exit(0)
 
     # Check for [finish] marker in prompt (check agent with finish context)
     is_finish_phase = "[finish]" in original_prompt.lower()
