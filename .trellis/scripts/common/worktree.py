@@ -250,6 +250,78 @@ def inspect_worktree(repo: Path, target: Path) -> WorktreeInspection:
     return item
 
 
+def inspect_for_write(repo: Path, task_dir: Path, target: Path, expected_owner: str | None) -> dict:
+    """Verify that ``target`` is the current, task-owned managed write lane."""
+    repo, task_dir, target = _absolute(repo), _absolute(task_dir), _absolute(target)
+    item = inspect_worktree(repo, target)
+    checks: dict[str, bool] = {}
+    errors: list[str] = []
+
+    def require(name: str, condition: bool, message: str) -> None:
+        checks[name] = condition
+        if not condition:
+            errors.append(message)
+
+    require("current_checkout", _path_key(repo) == _path_key(target), f"current repository checkout is '{repo}', not requested lane '{target}'")
+    require("exists", item.exists, f"worktree path does not exist: {target}")
+    require("registered", item.registered, f"worktree is not registered with Git: {target}")
+    require("non_primary", not item.primary, f"managed write lane must not be the primary checkout: {target}")
+    require("safe_path", not item.unsafe_link, f"worktree path is a link or reparse point: {target}")
+    require("same_repository", item.same_repository, f"worktree does not share the current repository identity: {target}")
+    require("attached_head", bool(item.head) and not item.detached and bool(item.branch), f"worktree HEAD is missing or detached: {target}")
+    require("branch_names_head", _named_ref_matches(repo, item.branch, item.head), f"checked-out branch does not name worktree HEAD: {item.branch or '<none>'}")
+    if item.errors:
+        checks["inspection_errors"] = False
+        errors.extend(f"worktree inspection error: {message}" for message in item.errors)
+    else:
+        checks["inspection_errors"] = True
+
+    records, _legacy, registry_error = _ownership_registry(task_dir)
+    require("task_registry", registry_error is None and records is not None, registry_error or f"task registry is unreadable: {task_dir / 'task.json'}")
+    matching: list[dict] = []
+    if records is not None:
+        target_key = _path_key(target)
+        for row in records:
+            row_path = row.get("path")
+            if isinstance(row_path, str) and _based_path_key(row_path, repo) == target_key:
+                matching.append(row)
+    require("recorded_path", len(matching) == 1, f"task must record exactly one ownership entry for lane: {target}")
+
+    record = matching[0] if len(matching) == 1 else {}
+    owner = record.get("owner")
+    recorded_owner = owner.strip() if isinstance(owner, str) and owner.strip() else None
+    expected_owner = expected_owner.strip() if isinstance(expected_owner, str) and expected_owner.strip() else None
+    require("managed", record.get("managed") is True, "task ownership entry does not mark the lane managed")
+    require("expected_owner", expected_owner is not None, "expected owner is required; rerun with --owner <expected-owner>")
+    require(
+        "owner",
+        recorded_owner is not None and expected_owner is not None and recorded_owner == expected_owner,
+        "task ownership entry has no non-empty owner" if recorded_owner is None else f"task ownership entry owner {recorded_owner!r} does not match expected owner {expected_owner!r}",
+    )
+    require("recorded_branch", isinstance(record.get("branch"), str) and record.get("branch") == item.branch, f"task branch {record.get('branch')!r} does not match Git branch {item.branch!r}")
+    common = _common_git_dir(repo)
+    recorded_common = record.get("common_git_dir")
+    require(
+        "recorded_repository",
+        common is not None and isinstance(recorded_common, str) and _based_path_key(recorded_common, repo) == _path_key(common),
+        "task ownership entry does not match the Git common directory",
+    )
+    return {
+        "ok": not errors,
+        "for_write": True,
+        "repo": repo,
+        "task": task_dir,
+        "path": target,
+        "owner": recorded_owner,
+        "expected_owner": expected_owner,
+        "branch": item.branch,
+        "head": item.head,
+        "dirty": item.dirty,
+        "checks": checks,
+        "errors": errors,
+    }
+
+
 def _task_data(task_dir: Path) -> tuple[dict | None, Path]:
     path = task_dir / "task.json"
     data, _ = read_json_checked(path)

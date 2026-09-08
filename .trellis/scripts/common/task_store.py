@@ -1595,6 +1595,11 @@ def _validate_subtask_link(graph: TaskRelations, parent: str, child: str) -> boo
             return False
     if graph.scan_issues:
         print("Error: task metadata scan is incomplete; inspect scan issues before linking", file=sys.stderr)
+        for issue in graph.scan_issues:
+            issue_path = graph.tasks_dir / str(issue.get("task", "<unknown>"))
+            if str(issue.get("message", "")).startswith("missing or unreadable task.json"):
+                issue_path /= FILE_TASK_JSON
+            print(f"  - {issue_path}: {issue.get('message', 'unknown scan failure')}", file=sys.stderr)
         return False
     for edge in graph.edges:
         if edge["kind"] in ("parent", "children", "subtasks") and edge["state"] == "ambiguous":

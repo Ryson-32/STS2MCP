@@ -288,8 +288,14 @@ Behavior:
   change mixed-language or punctuation-heavy input.
 - Creates an ephemeral channel (`createMode=run`), spawns a single worker,
   sends the prompt, waits for `done`, prints the final assistant text to
-  stdout, then removes the channel on success. On failure the channel is
-  kept for inspection and exit code is 1.
+  stdout, then removes the channel on success. After a post-spawn failure,
+  `run` terminates and verifies only the exact worker generation returned to
+  this invocation. It keeps the channel, events, and worker log for inspection
+  and exits non-zero. If teardown also fails, stderr reports that separately
+  while the original run error remains authoritative. Startup that never
+  yields an exact launch identity is preserved without signaling a guessed or
+  replacement process. A vanished PID sidecar is not accepted as proof of exit;
+  the captured process birth must probe dead before runtime sidecars are cleaned.
 
 > `run` has **no** `--tag` flag. Completion is detected via the `done`
 > event the supervisor emits.
@@ -533,4 +539,3 @@ Forum channels are event-sourced; use the CLI reducers
   pipe); diagnostic notes go to stderr.
 - **Errors** go through `chalk.red("Error:")` to stderr and `exit 1`.
 - **`wait` timeout** specifically exits **124**.
-

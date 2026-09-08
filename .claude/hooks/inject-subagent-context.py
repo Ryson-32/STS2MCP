@@ -1032,53 +1032,176 @@ def _codex_subagent_type(input_data: dict) -> str:
     return agent_type if agent_type in AGENTS_ALL else ""
 
 
+# Codex native startup is deliberately compact. Keep this section in sync with
+# Trellis's dogfood copy at .codex/hooks/inject-subagent-context.py.
+CODEX_NATIVE_BOOTSTRAP_MAX_BYTES = 6000
+
+
+def _compact_shared_spec_context(shared_context: str) -> str:
+    """Keep only the verified shared status/pin and published index path."""
+    lines = [line.strip() for line in shared_context.splitlines() if line.strip()]
+    opening = next(
+        (line for line in lines if line.startswith("<shared-spec-context ")), ""
+    )
+    index_line = ""
+    for line in lines:
+        marker = "Published index:"
+        if marker in line:
+            index_line = line[line.index(marker):]
+            break
+    if not opening:
+        return (
+            '<shared-spec-context status="unavailable">\n'
+            "No verified shared-spec index path was available from the hook repository.\n"
+            "</shared-spec-context>"
+        )
+
+    summary = [opening]
+    if index_line:
+        summary.append(index_line)
+    elif 'status="blocked"' in opening:
+        reason = next(
+            (
+                line
+                for line in lines
+                if not line.startswith("<")
+                and not line.startswith("Central shared Trellis rules")
+            ),
+            "Shared-spec resolution is blocked; no verified index path is available.",
+        )
+        summary.append(reason)
+    else:
+        summary.append("No verified shared-spec index path was reported.")
+    summary.append("</shared-spec-context>")
+    return "\n".join(summary)
+
+
+def _existing_codex_skill_paths(repo_root: str) -> list[str]:
+    """Return exact existing project skill entrypoints, never guessed user paths."""
+    skill_root = Path(repo_root) / ".agents" / "skills"
+    try:
+        return sorted(
+            str(path.resolve())
+            for path in skill_root.glob("*/SKILL.md")
+            if path.is_file()
+        )
+    except OSError:
+        return []
+
+
+def _codex_task_candidate(repo_root: str, task_dir: str | None) -> str:
+    if not task_dir:
+        return ACTIVE_TASK_NONE
+    try:
+        return str((Path(repo_root) / task_dir).resolve())
+    except OSError:
+        return task_dir
+
+
+def _bound_codex_native_bootstrap(context: str) -> str:
+    """Keep every native startup, including fallback, within the fixed budget."""
+    encoded = context.encode("utf-8")
+    if len(encoded) <= CODEX_NATIVE_BOOTSTRAP_MAX_BYTES:
+        return context
+    notice = (
+        "\n[Trellis: native bootstrap truncated at 6000 UTF-8 bytes; "
+        "discover exact paths from the assigned worktree.]"
+    )
+    cap = CODEX_NATIVE_BOOTSTRAP_MAX_BYTES - len(notice.encode("utf-8"))
+    prefix = truncate_utf8(encoded, cap).decode("utf-8", errors="strict")
+    # Never expose a path candidate that was cut in half. The fixed header is
+    # line-oriented, so dropping the final partial line preserves every path
+    # that remains in the compact output as an exact usable value.
+    last_newline = prefix.rfind("\n")
+    if last_newline >= 0:
+        prefix = prefix[:last_newline]
+    return prefix + notice
+
+
+def _codex_native_bootstrap(
+    subagent_type: str,
+    repo_root: str,
+    task_dir: str | None,
+    shared_context: str,
+    *,
+    fallback: bool,
+) -> str:
+    """Build paths-only orientation; role profiles load real materials separately."""
+    role = subagent_type.removeprefix("trellis-")
+    marker = "" if fallback else "<!-- trellis-hook-injected -->\n"
+    suffix = ": Task Fallback Required" if fallback else ""
+    skill_paths = _existing_codex_skill_paths(repo_root)
+    skills = (
+        "\n".join(f"- {path}" for path in skill_paths)
+        or "- None found in this hook repository."
+    )
+    candidate = _codex_task_candidate(repo_root, task_dir)
+    fallback_text = (
+        "The native event did not resolve a live parent task. Use the first "
+        "`Active task: <path>` line in the dispatch prompt; it may point to a "
+        "different repository."
+        if fallback
+        else (
+            "This parent task is a candidate only. The first `Active task:` line "
+            "in the dispatch prompt is authoritative, including `Active task: none`."
+        )
+    )
+    context = f"""{marker}# Trellis Native {role.title()} Subagent{suffix}
+
+Role (immutable for follow-up turns): `{subagent_type}`
+Parent task candidate: {candidate}
+Hook repository candidate: {Path(repo_root).resolve()}
+
+{fallback_text}
+The task path locates artifacts only. Keep the assigned repository or worktree
+as the command cwd and validate it before writes. Do not borrow another session.
+
+## Shared spec candidate
+
+{_compact_shared_spec_context(shared_context)}
+
+## Exact existing skill candidates
+
+{skills}
+
+This compact bootstrap intentionally does not inline a parent PRD, JSONL
+materials, shared route table, or rule bodies. Follow the immutable role profile:
+discover available FastCtx local-file tools once and use them for local reads,
+including known exact paths. Record a concrete unavailable/error reason before
+local fallback, use a separate semantic-search capability for relationships,
+and read selected task artifacts, skills, and rules to EOF."""
+    return _bound_codex_native_bootstrap(context)
+
+
 def build_codex_subagent_context(
     subagent_type: str,
+    repo_root: str,
     task_dir: str | None,
-    context: str,
+    shared_context: str,
 ) -> str:
-    """Build developer context for a native, already-dispatched Codex role."""
-    role = subagent_type.removeprefix("trellis-")
-    return f"""<!-- trellis-hook-injected -->
-# Trellis Native {role.title()} Subagent
-
-You are the dispatched `{subagent_type}` role for this task. Perform that role
-directly; do not follow main-session dispatch or wait instructions, and do not
-spawn another Trellis subagent.
-
-Active task: {task_dir or ACTIVE_TASK_NONE}
-
-## Curated Context
-
-{context}"""
+    """Build compact orientation for a native, already-dispatched Codex role."""
+    return _codex_native_bootstrap(
+        subagent_type,
+        repo_root,
+        task_dir,
+        shared_context,
+        fallback=False,
+    )
 
 
 def build_codex_task_fallback_context(
     subagent_type: str,
+    repo_root: str,
     shared_context: str,
 ) -> str:
     """Tell a native implement/check child to use its explicit task header."""
-    role = subagent_type.removeprefix("trellis-")
-    verified_context = shared_context or (
-        "No shared-spec context was available from the hook repository."
+    return _codex_native_bootstrap(
+        subagent_type,
+        repo_root,
+        None,
+        shared_context,
+        fallback=True,
     )
-    return f"""# Trellis Native {role.title()} Subagent: Task Fallback Required
-
-The parent session has no active task in this hook repository. Codex's native
-`SubagentStart` event does not include the dispatch prompt, so this hook cannot
-resolve an explicit cross-repository task path from that event.
-
-Use only the `Active task: <path>` line in your dispatch prompt as the task
-artifact location. That path may be absolute; it does not change the assigned
-repository or worktree used as the command workdir. Before any persistent write,
-validate the explicit task and the shared-spec version that applies there, using
-the target repository's resolver when needed. Do not infer a task, borrow another
-session's task, or treat the current repository context below as write
-authorization.
-
-## Verified Hook-Repository Context
-
-{verified_context}"""
 
 
 def _shared_specs_declared(repo_root: str) -> bool:
@@ -1178,7 +1301,7 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
             "hookSpecificOutput": {
                 "hookEventName": "SubagentStart",
                 "additionalContext": build_codex_task_fallback_context(
-                    subagent_type, shared_context
+                    subagent_type, repo_root, shared_context
                 ),
             }
         }
@@ -1190,31 +1313,15 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         if not task_dir:
             return
 
-    if subagent_type == AGENT_IMPLEMENT:
-        if task_dir is None:
-            return
-        context = get_implement_context(repo_root, task_dir)
-    elif subagent_type == AGENT_CHECK:
-        if task_dir is None:
-            return
-        context = get_check_context(repo_root, task_dir)
-    else:
-        context = get_research_context(repo_root, task_dir)
-
     shared_context = _shared_spec_context_text(
         repo_root, input_data, task_dir, allow_remote=False
     )
-    if shared_context:
-        context = f"{shared_context}\n\n{context}"
-
-    if not context:
-        return
 
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SubagentStart",
             "additionalContext": build_codex_subagent_context(
-                subagent_type, task_dir, context
+                subagent_type, repo_root, task_dir, shared_context
             ),
         }
     }

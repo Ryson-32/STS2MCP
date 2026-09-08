@@ -52,6 +52,7 @@ trellis channel context list <board> --scope global --thread <thread>
 - `done` and `turn_finished` finish a turn, not a persistent worker lifecycle. After the final turn of a `create` + `spawn` workflow, close the exact live worker with `kill`, or dry-run then `reclaim` its exact identity after abnormal supervisor loss. Prefer one-shot `run` when no later turn is planned.
 - A channel may have at most 25 live local supervisors by default. There is no minimum task duration: elapsed time, quiet output, or slow progress alone never authorizes interrupt, kill, or reclaim.
 - Provider usage-limit errors fail the current turn (`error` + `turn_finished`) but do not terminate, kill, reclaim, or automatically retry the worker.
+- One-shot `run` owns a single launch: after a post-spawn error or timeout it stops and verifies only that exact generation, keeps the channel/events/log for inspection, and reports any teardown failure separately. A partial startup without exact identity is preserved without guessing or signaling another generation.
 - Forum channels are event-sourced. Do not parse `events.jsonl` first; use `forum`, `thread`, `messages --thread`, and `context list`.
 - `@mindfoldhq/trellis-core` owns reusable channel/thread state, event append, seq allocation, context/title projection, reducers, and task helpers. The CLI owns flags, terminal rendering, prompts, worker lifecycle, and process exits.
 

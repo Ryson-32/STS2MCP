@@ -191,6 +191,11 @@ trellis channel kill impl-task --as codex-impl
 
 Side effects: cleans `pid`, `worker-pid`, `config`, `system-prompt`, `spawnlock` sidecar
 files; keeps `log`, `session-id`, `thread-id` for forensics and resume.
+
+Before replacing a failed worker for the same goal, terminate its exact
+generation, verify that it exited, and inspect or attribute its output and
+side effects. If startup is partial or identity has changed, preserve the
+evidence and do not signal a guessed process or start a sibling replacement.
 `runtime.durableWithoutSidecar` includes terminal history, so a non-zero value
 alone is not a live-process leak; confirm `durable.running`, `durable.terminal`
 and `runtime.sidecars` together.

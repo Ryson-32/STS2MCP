@@ -126,8 +126,12 @@ trellis channel run --provider codex --message-file prompt.txt --timeout 1m
 trellis channel run --agent plan --message-file plan-question.md --timeout 10m
 ```
 
-On success, `run` removes the ephemeral channel. On error/timeout/killed, it
-keeps the channel and prints the path for inspection.
+On success, `run` removes the ephemeral channel. After a post-spawn
+error/timeout/killed result, it stops and verifies only the exact worker
+generation created by that invocation, then keeps the channel, events, and
+worker log for inspection. A teardown failure is printed separately and does
+not replace the original run error. Partial startup without an exact launch
+identity is retained without signaling a guessed or replacement process.
 
 ## Pattern E: Forum Channel
 
