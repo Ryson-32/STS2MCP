@@ -118,14 +118,11 @@ def _record_start_state(
 
     # Only fill an empty field: an explicit `set-branch` must survive a later
     # `start` (re-starting a task after a checkout is a normal thing to do).
-    base_branch_conflict: str | None = None
     if not data.get("branch"):
         branch = current_branch_name(repo_root)
         if branch:
             data["branch"] = branch
             applied.append(f"✓ Branch recorded: {branch}{label}")
-            if branch == data.get("base_branch"):
-                base_branch_conflict = branch
         else:
             print(
                 colored(
@@ -152,24 +149,6 @@ def _record_start_state(
 
     for line in applied:
         print(colored(line, Colors.GREEN))
-
-    if base_branch_conflict:
-        # Recorded anyway — the value is true, it just cannot describe a PR.
-        # Archive refuses this shape, so say so now rather than at the gate.
-        print(
-            colored(
-                f"Warning: '{base_branch_conflict}' is also this task's base_branch; "
-                "a PR cannot target its own branch, and archive will refuse it.",
-                Colors.YELLOW,
-            ),
-            file=sys.stderr,
-        )
-        print(
-            f"Once you branch off, run: python {DIR_WORKFLOW}/scripts/task.py "
-            "set-branch <task> <feature-branch>",
-            file=sys.stderr,
-        )
-
 
 @_serialized_task_write
 def cmd_start(args: argparse.Namespace) -> int:
@@ -583,13 +562,11 @@ Rename options:
 
 Archive options:
   --no-commit                Skip the auto git commit after archiving
-  --skip-branch-validation   Archive despite missing or self-referential branch metadata.
-                             Archive normally refuses a task with no `branch` when it has a
-                             `base_branch` and the repo has a remote, or with
-                             `branch == base_branch`; repair those with `set-branch` /
-                             `set-base-branch` instead. Use this flag only for tasks that
-                             were never PR-backed. A recorded branch that was merged and
-                             deleted is only a warning and needs no flag.
+  --skip-branch-validation   Archive a PR-backed task despite missing or self-referential
+                             branch metadata. Validation applies only when `pr_url` is
+                             non-empty; ordinary tasks need no bypass. Use this flag only
+                             for exceptional repair of PR-backed metadata. A recorded branch
+                             that was merged and deleted is only a warning and needs no flag.
 
 List options:
   --mine, -m           Show only tasks assigned to current developer
@@ -609,7 +586,7 @@ Examples:
   python task.py rename add-login add-sso --dry-run  # Preview the change set
   python task.py rename add-login add-sso
   python task.py archive add-login
-  python task.py archive add-login --skip-branch-validation  # Task never had a branch of its own
+  python task.py archive add-login --skip-branch-validation  # Exceptional PR metadata repair
   python task.py add-subtask parent-task child-task  # Link existing tasks
   python task.py remove-subtask parent-task child-task
   python task.py list                               # List all active tasks
@@ -766,8 +743,8 @@ def main() -> int:
         "--skip-branch-validation",
         action="store_true",
         help=(
-            "Archive even when branch metadata is missing or self-referential "
-            "(for tasks that were never PR-backed)"
+            "Archive a PR-backed task despite missing or self-referential branch "
+            "metadata (exceptional repair; ordinary tasks need no bypass)"
         ),
     )
 

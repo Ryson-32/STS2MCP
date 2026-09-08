@@ -17,11 +17,17 @@ You are running as the `trellis-implement` sub-agent. The main session has dispa
 
 ## Context loading
 
-1. Read the first non-empty line of the dispatch prompt. A valid
-   `Active task: <path>` is authoritative. Any parent task shown by the native
-   hook is only a candidate, even when `<!-- trellis-hook-injected -->` is
-   present. If there is no valid explicit task, ask the main session; do not
-   guess or borrow one.
+1. Find the explicit task assignment in the dispatch or user prompt. A first
+   non-empty line `Active task: <path>` is the recommended machine-readable
+   form, not a permission gate. A clearly assigned absolute task-directory path
+   elsewhere in the prompt, including natural-language wording, is also
+   explicit after you verify it. If the path names `prd.md`, verify and use its
+   parent task directory. The explicit assignment is authoritative; any parent
+   task shown by the native hook is only a candidate, even when
+   `<!-- trellis-hook-injected -->` is present. Ask the main session only when
+   task identity is missing, conflicting, or ambiguous, or a required write
+   boundary is unclear. Do not reject an explicit task merely because it lacks
+   the standard header or is not the first line.
    If `Full hook output saved to: <path>` appears, read that saved file before
    relying on the visible bootstrap because the host may have truncated it.
 2. Keep the assigned repository or worktree as the command cwd. The task path
@@ -44,10 +50,9 @@ You are running as the `trellis-implement` sub-agent. The main session has dispa
 Before the first persistent write, and again after changing the explicit task or
 assigned worktree, prefer the complete preflight command emitted by
 `worktree.py create` when the dispatch provides it. Otherwise run:
-`python .trellis/scripts/worktree.py inspect TASK --path LANE --for-write --owner OWNER --json`.
-Replace `TASK`, `LANE`, and `OWNER` with the explicit task, assigned worktree,
-and expected owner supplied by the dispatch. Never derive `OWNER` from
-`task.json`. Run it with the process cwd set to `LANE`; do not pass `--repo`.
+`python .trellis/scripts/worktree.py inspect TASK --path LANE --for-write --json`.
+Replace `TASK` and `LANE` with the explicit task and assigned worktree supplied
+by the dispatch. Run it with the process cwd set to `LANE`; do not pass `--repo`.
 If preflight fails, make no writes and report the exact failure. Do not edit
 worktree scripts to add or bypass this API.
 

@@ -43,7 +43,6 @@ from .config import (
 from .git import (
     INDEX_LOCK_RETRY_ATTEMPTS,
     branch_exists_locally,
-    has_git_remote,
     index_lock_path,
     resolve_default_branch,
     run_git,
@@ -1186,10 +1185,9 @@ def _validate_branch_metadata(
     a task, so metadata nobody can reconstruct afterwards is refused here
     rather than repaired by hand later (#399 follow-up).
 
-    "PR-backed" is deliberately pragmatic: a task carrying a base_branch in a
-    repo that has a remote was created expecting a PR, so a missing `branch`
-    means the metadata was never recorded — not that the work had no branch.
-    Local-only repos and tasks without a base_branch are left alone.
+    A non-empty `pr_url` is the authoritative signal that a task was PR-backed.
+    Ordinary tasks may legitimately be completed on their base branch or never
+    record a feature branch at all.
 
     A recorded branch that no longer exists locally stays a warning: after a
     merge the feature branch is normally deleted, and refusing to archive then
@@ -1197,6 +1195,7 @@ def _validate_branch_metadata(
     """
     branch = _task_branch_field(data, "branch")
     base_branch = _task_branch_field(data, "base_branch")
+    pr_url = _task_branch_field(data, "pr_url")
     task_py = f"python {DIR_WORKFLOW}/scripts/task.py"
 
     if branch and not branch_exists_locally(branch, repo_root):
@@ -1209,7 +1208,7 @@ def _validate_branch_metadata(
             file=sys.stderr,
         )
 
-    if skip:
+    if skip or not pr_url:
         return True
 
     if branch and base_branch and branch == base_branch:
@@ -1232,12 +1231,12 @@ def _validate_branch_metadata(
         )
         return False
 
-    if not branch and base_branch and has_git_remote(repo_root):
+    if not branch:
         print(
             colored(
                 f"Error: refusing to archive '{task_name}': no branch is recorded, "
-                f"but the task targets base_branch '{base_branch}' in a repo with a "
-                "remote — the branch it was built on was never written down.",
+                f"but pr_url '{pr_url}' records merged PR-backed work whose source "
+                "branch was never written down.",
                 Colors.RED,
             ),
             file=sys.stderr,

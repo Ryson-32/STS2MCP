@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Restore pinned shared Trellis rules after a Codex compact event."""
+"""Reload current shared Trellis rules after a Codex compact event."""
 
 from __future__ import annotations
 
@@ -90,7 +90,8 @@ def _shared_specs_declared(project_dir: Path) -> bool:
         return False
 
 
-def _shared_spec_context(project_dir: Path, hook_input: dict) -> str:
+def _shared_spec_context(project_dir: Path) -> str:
+    """Prepare the latest available central shared-spec context."""
     scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -100,12 +101,7 @@ def _shared_spec_context(project_dir: Path, hook_input: dict) -> str:
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(
-            project_dir,
-            platform_input=hook_input,
-            platform="codex",
-            allow_remote=False,
-        )
+        context = ensure_shared_spec_context(project_dir)
         return render_shared_spec_context(context)
     except Exception:
         if not _shared_specs_declared(project_dir):
@@ -136,7 +132,7 @@ def main() -> None:
         return
     configure_project_encoding(project_dir)
 
-    context = _shared_spec_context(project_dir, hook_input)
+    context = _shared_spec_context(project_dir)
     if not context:
         return
     result = {

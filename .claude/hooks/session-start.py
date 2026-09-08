@@ -819,11 +819,7 @@ def _build_workflow_overview(workflow_path: Path) -> str:
     return "\n".join(out_lines).rstrip()
 
 
-def _shared_spec_context(
-    project_dir: Path,
-    hook_input: dict,
-    context_key: str | None,
-) -> str:
+def _shared_spec_context(project_dir: Path) -> str:
     scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -833,13 +829,7 @@ def _shared_spec_context(
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(
-            project_dir,
-            context_key=context_key,
-            platform_input=hook_input,
-            platform=_detect_platform(hook_input),
-            allow_remote=True,
-        )
+        context = ensure_shared_spec_context(project_dir)
         return render_shared_spec_context(context)
     except Exception:
         try:
@@ -921,7 +911,7 @@ Trellis compact SessionStart context. Use it to orient the session; load details
     output.write(_build_compact_current_state(trellis_dir, hook_input, spec_index_paths))
     output.write("\n</current-state>\n\n")
 
-    shared_context = _shared_spec_context(project_dir, hook_input, context_key)
+    shared_context = _shared_spec_context(project_dir)
     if shared_context:
         output.write(shared_context)
         output.write("\n\n")

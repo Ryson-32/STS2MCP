@@ -35,15 +35,15 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 <!-- TRELLIS-PROFILE:START -->
 ## 共享 Trellis 规则入口
 
-共享规则由 Trellis 会话缓存固定到已验证版本，不复制到项目 Git。新主会话通常由 hook 完成一次检查；当前上下文没有注入共享索引、版本和实际路径时，运行：
+共享规则在每次加载时从配置的 Registry ref 获取并验证当前版本，不与会话或任务族绑定，也不复制到项目 Git。hook 通常自动执行；当前上下文没有注入共享索引、版本和实际路径时，运行：
 
 `python .trellis/scripts/shared_spec_cache.py ensure`
 
-命令与 hook 共用输出：固定版本的索引及已配置规范全文。索引标记“全文已随本次上下文注入”的同版规范一般无需重读；其余按当前任务选择直接命中的 owner，每次完整读取一个文件到 EOF，不做传递式全量加载。新上下文不可沿用旧的已注入标记。机器读取可加 `--json`，完整内容在 `context` 字段。
+命令与 hook 共用输出：当前场景索引、本次实际读取 SHA 及已配置规范全文。索引只为同次输出完整包含的正文标记“全文已随本次上下文注入，同版本一般无需重读”；其余按当前任务选择直接命中的 owner，每次完整读取一个文件到 EOF，不做传递式全量加载。每次加载都重新检查配置 ref，旧标记不能替代本次输出。网络不可用时可以使用已验证缓存，但会明确提示尚未确认其相对配置 ref 的新鲜度。机器读取可加 `--json`；`context` 含同一输出，`sha` 与 `index_path` 记录本次实际来源。
 
 旧逻辑引用 `.trellis/spec/shared/<owner>.md` 继续有效。需要实际文件路径时运行 `python .trellis/scripts/shared_spec_cache.py resolve <logical-ref> --json`，使用返回的验证缓存路径；不要猜测缓存目录。
 
-项目说明中的 Registry 网页链接只供人类浏览当前 `main`，不代表本任务版本。AI 执行仍以当前会话固定快照为准。
+项目说明中的 Registry 网页链接只供人类浏览当前 `main`，不能代替加载结果。AI 执行以本次输出的正文和 SHA 为准；SHA 只记录实际来源，不锁定会话或任务。
 
 ## 项目私有规则路由
 

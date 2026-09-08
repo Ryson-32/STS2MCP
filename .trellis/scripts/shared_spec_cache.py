@@ -23,17 +23,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare or resolve the shared-spec cache")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    ensure_parser = subparsers.add_parser("ensure", help="pin a verified shared-spec snapshot")
+    ensure_parser = subparsers.add_parser("ensure", help="load the configured shared-spec ref")
     ensure_parser.add_argument("--offline", action="store_true", help="do not contact the registry")
     ensure_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
-    ensure_parser.add_argument("--context-key")
-    ensure_parser.add_argument("--task-dir")
 
     resolve_parser = subparsers.add_parser("resolve", help="resolve a logical shared-spec reference")
     resolve_parser.add_argument("reference")
     resolve_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
-    resolve_parser.add_argument("--context-key")
-    resolve_parser.add_argument("--task-dir")
 
     args = parser.parse_args()
     repo_root = get_repo_root()
@@ -41,8 +37,6 @@ def main() -> int:
     if args.command == "ensure":
         context = ensure_shared_spec_context(
             repo_root,
-            context_key=args.context_key,
-            task_dir=args.task_dir,
             allow_remote=not args.offline,
         )
         payload = context.to_dict()
@@ -61,12 +55,7 @@ def main() -> int:
                 sys.stdout.write(encoded.decode("utf-8"))
         return 0 if not context.write_blocked else 2
 
-    resolved = resolve_shared_spec_reference(
-        args.reference,
-        repo_root,
-        context_key=args.context_key,
-        task_dir=args.task_dir,
-    )
+    resolved = resolve_shared_spec_reference(args.reference, repo_root)
     payload = {"reference": args.reference, "path": str(resolved) if resolved else None}
     if args.json:
         print(json.dumps(payload, ensure_ascii=False))

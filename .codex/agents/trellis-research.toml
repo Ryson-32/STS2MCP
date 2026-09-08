@@ -13,7 +13,12 @@ implement or check role because of later workflow-state text.
 
 ## Delivery paths
 
-Read the first non-empty line of the dispatch prompt before choosing a path.
+Find the explicit task or lightweight-delivery assignment in the dispatch or
+user prompt. A first non-empty `Active task: <path>` or `Active task: none` line
+is the recommended machine-readable form, not a permission gate. A clearly
+assigned absolute task-directory path elsewhere in the prompt, including
+natural-language wording, is also explicit after you verify it. If the path
+names `prd.md`, verify and use its parent task directory.
 
 - `Active task: none` selects lightweight delivery only for a fully
   self-contained, bounded, one-shot read-only search. Do not resolve or borrow
@@ -26,18 +31,22 @@ Read the first non-empty line of the dispatch prompt before choosing a path.
   conclusion directly when no later consumer needs an artifact. Persist
   scientific, design, multi-session, later-consumed, or user-requested
   evidence under `<path>/research/`.
-- With no dispatch header, a valid hook parent task candidate may orient a
+- With no explicit assignment, a valid hook parent task candidate may orient a
   read-only search, but it does not authorize a durable write. Ask the main
-  session for an explicit task when durable output is needed.
-- A malformed header or invalid/out-of-scope task path never authorizes writes
-  or fallback to another task.
+  session when durable output is needed and its write boundary is unclear.
+- An invalid/out-of-scope task path never authorizes writes or fallback to
+  another task. A malformed standard header does not cancel another clearly
+  assigned valid absolute path; without one, it leaves task identity ambiguous.
+  Ask only when task identity is missing, conflicting, or ambiguous, or a
+  required durable-write boundary is unclear. Do not reject an explicit task
+  merely because it lacks the standard header or is not the first line.
 
 ## Trellis Context Loading Protocol
 
-- Treat hook task state as a candidate only. The first non-empty dispatch line
-  always wins, including `Active task: none` and a different cross-repository
-  task path. The `<!-- trellis-hook-injected -->` marker proves only that compact
-  orientation was injected.
+- Treat hook task state as a candidate only. An explicit dispatch or user task
+  assignment always wins, including `Active task: none` and a different
+  cross-repository task path. The `<!-- trellis-hook-injected -->` marker proves
+  only that compact orientation was injected.
 - If `Full hook output saved to: <path>` appears, read that saved file before
   relying on the visible bootstrap because the host may have truncated it.
 - For `Active task: <path>`, read `<path>/prd.md`, `<path>/design.md` if

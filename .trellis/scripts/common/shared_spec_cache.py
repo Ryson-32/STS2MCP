@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Immutable, session-pinned cache for centrally published shared specs.
+"""Verified immutable cache for centrally published shared specs.
 
-The feature is opt-in through ``.trellis/config.yaml``.  Cache objects and
-pin records live outside the consumer repository so a shared-rule release does
-not dirty consumer Git state.
+The feature is opt-in through ``.trellis/config.yaml``. Cache objects live
+outside the consumer repository so a shared-rule release does not dirty
+consumer Git state.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import time
@@ -38,6 +39,7 @@ DEFAULT_AUTO_INJECT_CONTEXT_BYTES = 128 * 1024
 MAX_AUTO_INJECT_FILES = 64
 MAX_AUTO_INJECT_PATH_BYTES = 512
 AUTO_INJECT_MARKER = "[全文已随本次上下文注入，同版本一般无需重读]"
+REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 @dataclass(frozen=True)
@@ -200,30 +202,6 @@ def _registry_dir(config: SharedSpecConfig) -> Path:
     return get_shared_spec_cache_root() / "registries" / config.registry_key
 
 
-def _repo_key(repo_root: Path) -> str:
-    """Return one local identity for a checkout and all of its worktrees."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            cwd=repo_root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError("Git common-dir identity probe failed") from exc
-    common_dir = result.stdout.strip() if result.returncode == 0 else ""
-    if not common_dir:
-        raise RuntimeError("Git common-dir identity probe returned no path")
-    identity = Path(common_dir).resolve()
-    return _hash(os.path.normcase(str(identity)))
-
-
 def _snapshot_dir(config: SharedSpecConfig, sha: str) -> Path:
     return _registry_dir(config) / "snapshots" / sha
 
@@ -233,19 +211,6 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     temp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     temp.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(temp, path)
-
-
-def _write_json_once(path: Path, data: dict[str, Any]) -> dict[str, Any]:
-    """Atomically create a pin and return the winning record."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _SourceLock(path.with_name(f"{path.name}.lock")) as acquired:
-        if not acquired:
-            return _read_json(path) or {}
-        existing = _read_json(path)
-        if existing is not None or path.exists():
-            return existing or {}
-        _atomic_write_json(path, data)
-        return data
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -264,24 +229,70 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _path_is_link(path: Path) -> bool:
+    """Detect symlinks and Windows reparse points on Python 3.9+."""
+    if path.is_symlink():
+        return True
+    try:
+        attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    except FileNotFoundError:
+        return False
+    return bool(attributes & REPARSE_POINT_ATTRIBUTE)
+
+
+def _snapshot_path(snapshot: Path, relative: str) -> Path:
+    """Join a safe lexical path while rejecting every linked segment."""
+    safe_relative = _safe_relative_path(relative)
+    if safe_relative != relative:
+        raise ValueError("shared-spec snapshot contains an unsafe path")
+    current = snapshot
+    if _path_is_link(current):
+        raise ValueError("shared-spec snapshot contains a link")
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        if _path_is_link(current):
+            raise ValueError("shared-spec snapshot contains a link")
+    return current
+
+
+def _regular_snapshot_files(root: Path) -> list[Path]:
+    """Enumerate regular files without following symlinks or reparse points."""
+    if _path_is_link(root):
+        raise ValueError("shared-spec snapshot contains a link")
+    if not root.is_dir():
+        raise ValueError("shared-spec snapshot directory is missing")
+
+    files: list[Path] = []
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                path = Path(entry.path)
+                if _path_is_link(path):
+                    raise ValueError("shared-spec snapshot contains a link")
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(path)
+                elif entry.is_file(follow_symlinks=False):
+                    files.append(path)
+                else:
+                    raise ValueError("shared-spec snapshot contains an unsupported entry")
+    return sorted(files)
+
+
 def _build_manifest(
     snapshot: Path,
     config: SharedSpecConfig,
     sha: str,
     source_tree: str,
 ) -> dict[str, Any]:
-    source_root = snapshot.joinpath(*PurePosixPath(config.path).parts)
+    source_root = _snapshot_path(snapshot, config.path)
     if not (source_root / "index.md").is_file():
         raise ValueError("shared spec snapshot has no index.md")
 
     files: dict[str, str] = {}
-    for path in sorted(source_root.rglob("*")):
-        if path.is_symlink():
-            raise ValueError("shared spec snapshot contains a symlink")
-        if not path.is_file():
-            continue
+    for path in _regular_snapshot_files(source_root):
         relative = path.relative_to(snapshot).as_posix()
-        path.resolve().relative_to(snapshot.resolve())
         if path.suffix.lower() == ".md":
             path.read_text(encoding="utf-8")
         files[relative] = _file_hash(path)
@@ -298,9 +309,15 @@ def _build_manifest(
 
 def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None, str | None]:
     if not SHA_RE.fullmatch(sha):
-        return None, "invalid pinned shared-spec SHA"
+        return None, "invalid shared-spec SHA"
     snapshot = _snapshot_dir(config, sha)
-    manifest = _read_json(snapshot / MANIFEST_FILE)
+    try:
+        manifest_path = _snapshot_path(snapshot, MANIFEST_FILE)
+    except ValueError as error:
+        return None, str(error)
+    except OSError:
+        return None, "shared-spec snapshot could not be validated"
+    manifest = _read_json(manifest_path)
     if not manifest:
         return None, "shared-spec snapshot manifest is missing or unreadable"
     schema = manifest.get("schema")
@@ -309,36 +326,57 @@ def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None,
     expected = manifest.get("files")
     if not isinstance(expected, dict) or not expected:
         return None, "shared-spec snapshot manifest has no files"
-    # Schema 1 snapshots remain usable only when the local Git object cache can
-    # independently reproduce their complete archived file set and bytes.
-    source_tree, source_files, source_error = _git_source_manifest(config, sha)
-    if source_error:
-        return None, source_error
-    if schema == 2 and manifest.get("source_tree") != source_tree:
-        return None, "shared-spec snapshot manifest does not match the recorded Git tree"
-    if expected != source_files:
-        return None, "shared-spec snapshot manifest does not match the recorded Git source"
+    source_blobs: dict[str, str] | None = None
+    object_format: str | None = None
+    if schema == 1:
+        # Legacy manifests did not record a tree identity. Reproduce their
+        # source once per validation so existing verified caches stay usable.
+        _, source_files, source_error = _git_source_manifest(config, sha)
+        if source_error:
+            return None, source_error
+        if expected != source_files:
+            return None, "shared-spec snapshot manifest does not match the recorded Git source"
+    else:
+        # Enumerating the tree is much cheaper than replaying a full archive and
+        # still ties every snapshot byte to a blob in the recorded Git source.
+        source_tree, source_blobs, object_format, source_error = _git_source_blobs(config, sha)
+        if source_error:
+            return None, source_error
+        if manifest.get("source_tree") != source_tree:
+            return None, "shared-spec snapshot manifest does not match the recorded Git tree"
+        if set(expected) != set(source_blobs or {}):
+            return None, "shared-spec snapshot file set does not match the recorded Git source"
     try:
         actual_paths = {
             path.relative_to(snapshot).as_posix()
-            for path in snapshot.rglob("*")
-            if path.is_file() and path.name != MANIFEST_FILE
+            for path in _regular_snapshot_files(snapshot)
+            if path.name != MANIFEST_FILE
         }
         if actual_paths != set(expected):
             return None, "shared-spec snapshot file set failed validation"
         for relative, digest in expected.items():
             if not isinstance(relative, str) or not isinstance(digest, str):
                 return None, "shared-spec snapshot manifest contains an invalid entry"
-            candidate = snapshot.joinpath(*PurePosixPath(relative).parts)
-            candidate.resolve().relative_to(snapshot.resolve())
-            if candidate.is_symlink() or not candidate.is_file() or _file_hash(candidate) != digest:
+            safe_relative = _safe_relative_path(relative)
+            if safe_relative != relative:
+                return None, "shared-spec snapshot manifest contains an unsafe path"
+            candidate = _snapshot_path(snapshot, relative)
+            if not candidate.is_file():
                 return None, "shared-spec snapshot bytes failed validation"
+            data = candidate.read_bytes()
+            if hashlib.sha256(data).hexdigest() != digest:
+                return None, "shared-spec snapshot bytes failed validation"
+            if source_blobs is not None and object_format is not None:
+                if _git_blob_hash(data, object_format) != source_blobs.get(relative):
+                    return None, "shared-spec snapshot bytes do not match the recorded Git source"
             if candidate.suffix.lower() == ".md":
-                candidate.read_text(encoding="utf-8")
-        source_root = snapshot.joinpath(*PurePosixPath(config.path).parts)
+                data.decode("utf-8", errors="strict")
+        source_root = _snapshot_path(snapshot, config.path)
         if not (source_root / "index.md").is_file():
             return None, "shared-spec snapshot index.md is missing"
-    except (OSError, UnicodeError, RuntimeError, ValueError):
+    except ValueError as error:
+        return None, str(error)
+    except (OSError, UnicodeError, RuntimeError):
         return None, "shared-spec snapshot could not be validated"
     return snapshot, None
 
@@ -474,6 +512,66 @@ def _git_source_manifest(
     return source_tree, files, None
 
 
+def _git_source_blobs(
+    config: SharedSpecConfig,
+    sha: str,
+) -> tuple[str | None, dict[str, str] | None, str | None, str | None]:
+    """Return the source tree and blob identities without replaying an archive."""
+    source_tree, tree_error = _source_tree_id(config, sha)
+    if source_tree is None:
+        return None, None, None, tree_error
+
+    git_dir = _registry_dir(config) / "objects.git"
+    try:
+        listed = _run_git(
+            ["ls-tree", "-r", "-z", source_tree],
+            git_dir,
+            ARCHIVE_TIMEOUT_SECONDS,
+            binary=True,
+        )
+        object_format_result = _run_git(
+            ["rev-parse", "--show-object-format"],
+            git_dir,
+            ARCHIVE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None, None, "recorded shared-spec Git tree validation failed"
+    object_format = object_format_result.stdout.strip().lower()
+    if listed.returncode != 0 or object_format_result.returncode != 0 or object_format not in ("sha1", "sha256"):
+        return None, None, None, "recorded shared-spec Git tree could not be enumerated"
+
+    blobs: dict[str, str] = {}
+    try:
+        for entry in listed.stdout.split(b"\0"):
+            if not entry:
+                continue
+            metadata, raw_path = entry.split(b"\t", 1)
+            mode, object_type, raw_oid = metadata.split(b" ", 2)
+            if object_type != b"blob" or mode not in (b"100644", b"100755"):
+                return None, None, None, "recorded shared-spec Git tree contains a non-file entry"
+            relative = raw_path.decode("utf-8", errors="strict")
+            safe_relative = _safe_relative_path(relative)
+            oid = raw_oid.decode("ascii").lower()
+            if safe_relative is None or not SHA_RE.fullmatch(oid):
+                return None, None, None, "recorded shared-spec Git tree contains an unsafe entry"
+            source_path = f"{config.path}/{safe_relative}"
+            if source_path in blobs:
+                return None, None, None, "recorded shared-spec Git tree contains a duplicate entry"
+            blobs[source_path] = oid
+    except (UnicodeError, ValueError):
+        return None, None, None, "recorded shared-spec Git tree could not be decoded"
+    if not blobs:
+        return None, None, None, "recorded shared-spec Git source is empty"
+    return source_tree, blobs, object_format, None
+
+
+def _git_blob_hash(data: bytes, object_format: str) -> str:
+    digest = hashlib.new(object_format)
+    digest.update(f"blob {len(data)}\0".encode("ascii"))
+    digest.update(data)
+    return digest.hexdigest()
+
+
 def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
     registry_dir = _registry_dir(config)
     with _SourceLock(registry_dir / "update.lock") as acquired:
@@ -570,13 +668,14 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
 
 def _latest_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
     registry_dir = _registry_dir(config)
+    latest_error: str | None = None
     latest = _read_json(registry_dir / "latest.json")
     if latest is not None and isinstance(latest.get("sha"), str):
         sha = latest["sha"].lower()
         snapshot, error = _validate_snapshot(config, sha)
         if snapshot is not None:
             return sha, None
-        return None, error or "latest shared-spec snapshot is invalid"
+        latest_error = error or "latest shared-spec snapshot is invalid"
 
     snapshots_dir = registry_dir / "snapshots"
     if snapshots_dir.is_dir():
@@ -590,88 +689,7 @@ def _latest_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
             if snapshot is not None:
                 _atomic_write_json(registry_dir / "latest.json", {"sha": candidate.name})
                 return candidate.name, None
-    return None, "no verified shared-spec snapshot is available"
-
-
-def _resolve_context_key(
-    repo_root: Path,
-    context_key: str | None,
-    platform_input: dict[str, Any] | None,
-    platform: str | None,
-) -> str:
-    if context_key:
-        return context_key
-    try:
-        from .active_task import resolve_context_key
-
-        resolved = resolve_context_key(platform_input, platform)
-    except Exception:
-        resolved = None
-    return resolved or f"process-{os.getppid()}"
-
-
-def _active_task_dir(
-    repo_root: Path,
-    task_dir: str | Path | None,
-    platform_input: dict[str, Any] | None,
-    platform: str | None,
-) -> Path | None:
-    if task_dir:
-        candidate = Path(task_dir)
-        if not candidate.is_absolute():
-            candidate = repo_root / candidate
-        return candidate.resolve() if candidate.is_dir() else None
-    try:
-        from .active_task import resolve_active_task, resolve_task_ref
-
-        active = resolve_active_task(repo_root, platform_input, platform)
-        return resolve_task_ref(active.task_path, repo_root) if active.task_path else None
-    except Exception:
-        return None
-
-
-def _task_family_key(repo_root: Path, task_dir: Path | None) -> str | None:
-    if task_dir is None:
-        return None
-    current = task_dir
-    seen: set[Path] = set()
-    try:
-        from .task_utils import resolve_task_dir
-    except Exception:
-        return _hash(current.as_posix())
-
-    for _ in range(32):
-        resolved = current.resolve()
-        if resolved in seen:
-            return None
-        seen.add(resolved)
-        data = _read_json(current / "task.json") or {}
-        parent = data.get("parent")
-        if not isinstance(parent, str) or not parent.strip():
-            try:
-                relative = current.resolve().relative_to(repo_root.resolve()).as_posix()
-            except ValueError:
-                return None
-            return _hash(relative)
-        next_dir = resolve_task_dir(parent, repo_root)
-        if next_dir is None or not next_dir.is_dir():
-            return None
-        current = next_dir
-    return None
-
-
-def _pin_paths(config: SharedSpecConfig, repo_key: str, context_key: str, family_key: str | None) -> tuple[Path, Path | None]:
-    base = _registry_dir(config) / "pins" / repo_key
-    session = base / "sessions" / f"{_hash(context_key)}.json"
-    family = base / "tasks" / f"{family_key}.json" if family_key else None
-    return session, family
-
-
-def _pin_sha(record: dict[str, Any] | None, config: SharedSpecConfig) -> str | None:
-    if not record or record.get("registry_key") != config.registry_key:
-        return None
-    sha = record.get("sha")
-    return sha.lower() if isinstance(sha, str) and SHA_RE.fullmatch(sha.lower()) else None
+    return None, latest_error or "no verified shared-spec snapshot is available"
 
 
 def _routing_rows(source_root: Path) -> list[dict[str, str]]:
@@ -692,13 +710,12 @@ def _routing_rows(source_root: Path) -> list[dict[str, str]]:
         safe_relative = _safe_relative_path(relative)
         if safe_relative is None:
             continue
-        path = source_root.joinpath(*PurePosixPath(safe_relative).parts).resolve()
         try:
-            path.relative_to(source_root.resolve())
-        except ValueError:
+            path = _snapshot_path(source_root, safe_relative)
+        except (OSError, ValueError):
             continue
         if path.is_file():
-            routes.append({"owner": label, "when": when, "path": str(path)})
+            routes.append({"owner": label, "when": when, "path": str(path.resolve())})
     return routes
 
 
@@ -740,13 +757,9 @@ def _blocked(message: str) -> SharedSpecContext:
 def ensure_shared_spec_context(
     repo_root: Path,
     *,
-    context_key: str | None = None,
-    task_dir: str | Path | None = None,
-    platform_input: dict[str, Any] | None = None,
-    platform: str | None = None,
     allow_remote: bool = True,
 ) -> SharedSpecContext:
-    """Select and pin one immutable snapshot for the session/task family."""
+    """Load the configured ref or fall back to the latest verified cache."""
     repo_root = repo_root.resolve()
     config, config_error = load_shared_spec_config(repo_root)
     if config_error:
@@ -754,72 +767,11 @@ def ensure_shared_spec_context(
     if config is None:
         return SharedSpecContext(False, False, "disabled")
 
-    key = _resolve_context_key(repo_root, context_key, platform_input, platform)
-    active_dir = _active_task_dir(repo_root, task_dir, platform_input, platform)
-    family_key = _task_family_key(repo_root, active_dir)
-    try:
-        repo_key = _repo_key(repo_root)
-    except RuntimeError:
-        return _blocked(
-            "The stable Git common-dir identity could not be determined; existing session/task pins will not be replaced. "
-            "Read-only diagnostics may continue; writes that depend on shared rules are blocked."
-        )
-    session_pin, family_pin = _pin_paths(config, repo_key, key, family_key)
-    attempt_path = _registry_dir(config) / "attempts" / repo_key / f"{_hash(key)}.json"
-    attempted = attempt_path.exists()
-    session_sha = _pin_sha(_read_json(session_pin), config)
-    family_sha = _pin_sha(_read_json(family_pin), config) if family_pin else None
-
-    if session_pin.exists() and session_sha is None:
-        return _blocked("The current session shared-spec pin is unreadable or invalid; it will not be replaced automatically.")
-    if family_pin and family_pin.exists() and family_sha is None:
-        return _blocked("The current task-family shared-spec pin is unreadable or invalid; it will not be replaced automatically.")
-    if session_sha and family_sha and session_sha != family_sha:
-        return _blocked("The session and task-family shared-spec pins conflict; neither pin will be overwritten.")
-
-    pinned_sha = session_sha or family_sha
-    if pinned_sha:
-        snapshot, error = _validate_snapshot(config, pinned_sha)
-        if snapshot is None:
-            return _blocked(f"Pinned shared-spec snapshot {pinned_sha} is unavailable or corrupt: {error}. It will not fall back to another SHA.")
-        record = {"registry_key": config.registry_key, "sha": pinned_sha}
-        if family_pin is not None and not family_sha:
-            family_winner = _write_json_once(family_pin, record)
-            if _pin_sha(family_winner, config) != pinned_sha:
-                return _blocked("A concurrent task-family pin conflicts with the current session pin.")
-        if not session_sha:
-            winner = _write_json_once(session_pin, record)
-            if _pin_sha(winner, config) != pinned_sha:
-                return _blocked("A concurrent session pin conflicts with the inherited task-family pin.")
-
-        remote_error = None
-        if allow_remote and not attempted and family_sha is None:
-            _, remote_error = _fetch_snapshot(config)
-            _atomic_write_json(attempt_path, {"attempted": True})
-        index_path, owners, routes, auto_inject = _owners(config, pinned_sha)
-        return SharedSpecContext(
-            True,
-            True,
-            "pinned",
-            pinned_sha,
-            index_path,
-            owners,
-            warning=(
-                "Remote shared-spec update was unavailable; the existing pinned snapshot remains active."
-                if remote_error
-                else None
-            ),
-            source="session" if session_sha else "task-family",
-            routes=routes,
-            auto_inject=auto_inject,
-        )
-
     selected_sha: str | None = None
     remote_error: str | None = None
     source = "verified-cache"
-    if allow_remote and not attempted:
+    if allow_remote:
         selected_sha, remote_error = _fetch_snapshot(config)
-        _atomic_write_json(attempt_path, {"attempted": True})
         if selected_sha:
             source = "remote"
 
@@ -827,27 +779,7 @@ def ensure_shared_spec_context(
         selected_sha, cache_error = _latest_snapshot(config)
         if selected_sha is None:
             reason = remote_error or cache_error
-            if attempted and not allow_remote:
-                reason = cache_error
             return _blocked(f"Shared-spec cache is unavailable: {reason}. Read-only diagnostics may continue; writes that depend on shared rules are blocked.")
-
-    record = {"registry_key": config.registry_key, "sha": selected_sha}
-    if family_pin is not None:
-        family_winner = _write_json_once(family_pin, record)
-        winner_sha = _pin_sha(family_winner, config)
-        if winner_sha != selected_sha:
-            if winner_sha:
-                winner_snapshot, error = _validate_snapshot(config, winner_sha)
-                if winner_snapshot is None:
-                    return _blocked(f"The winning task-family pin is unavailable or corrupt: {error}.")
-                selected_sha = winner_sha
-                record = {"registry_key": config.registry_key, "sha": selected_sha}
-                source = "task-family"
-            else:
-                return _blocked("A concurrent task-family pin write produced an invalid record.")
-    session_winner = _write_json_once(session_pin, record)
-    if _pin_sha(session_winner, config) != selected_sha:
-        return _blocked("A concurrent session pin conflicts with the selected task-family pin.")
 
     snapshot, error = _validate_snapshot(config, selected_sha)
     if snapshot is None:
@@ -857,7 +789,11 @@ def ensure_shared_spec_context(
     status = "ready"
     if source == "verified-cache":
         status = "offline"
-        warning = "Remote shared-spec update was unavailable or skipped; using an existing verified immutable snapshot."
+        warning = (
+            "The configured shared-spec Registry ref could not be refreshed; using an existing verified cache. Freshness is unconfirmed."
+            if remote_error
+            else "Registry access was skipped; using an existing verified shared-spec cache. Freshness against the configured ref is unconfirmed."
+        )
     return SharedSpecContext(
         True,
         True,
@@ -881,13 +817,8 @@ def is_shared_spec_reference(reference: str) -> bool:
 def resolve_shared_spec_reference(
     reference: str,
     repo_root: Path,
-    *,
-    context_key: str | None = None,
-    task_dir: str | Path | None = None,
-    platform_input: dict[str, Any] | None = None,
-    platform: str | None = None,
 ) -> Path | None:
-    """Resolve an old logical shared path to the pinned immutable snapshot.
+    """Resolve an old logical shared path through the latest available context.
 
     A physical consumer-owned legacy path wins.  This preserves unknown local
     files while Profile removes only hash-proven Registry-owned copies.
@@ -901,14 +832,7 @@ def resolve_shared_spec_reference(
     if not is_shared_spec_reference(reference):
         return None
 
-    context = ensure_shared_spec_context(
-        repo_root,
-        context_key=context_key,
-        task_dir=task_dir,
-        platform_input=platform_input,
-        platform=platform,
-        allow_remote=False,
-    )
+    context = ensure_shared_spec_context(repo_root)
     if not context.available or not context.sha:
         return None
     config, _ = load_shared_spec_config(repo_root)
@@ -967,7 +891,7 @@ def render_shared_spec_context(
             body = raw.decode("utf-8")
         except (OSError, UnicodeError):
             read_failures[relative] = (
-                f"- {relative}: full body was not injected because the pinned file could not be read. "
+                f"- {relative}: full body was not injected because the selected file could not be read. "
                 + _auto_inject_recovery(logical, restore_cache=True)
             )
             continue
@@ -988,7 +912,7 @@ def render_shared_spec_context(
         }
         lines = [
             f'<shared-spec-context status="{context.status}" sha="{context.sha}">',
-            f"Central shared Trellis rules are pinned for this session/task family. Published index: {context.index_path}",
+            f"Central shared Trellis rules were loaded from the configured ref or verified cache. Published index: {context.index_path}",
             "Select every directly matching owner from this published when-to-read index, then read its full body on demand:",
         ]
         if include_routes:

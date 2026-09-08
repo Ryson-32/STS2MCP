@@ -250,7 +250,7 @@ def inspect_worktree(repo: Path, target: Path) -> WorktreeInspection:
     return item
 
 
-def inspect_for_write(repo: Path, task_dir: Path, target: Path, expected_owner: str | None) -> dict:
+def inspect_for_write(repo: Path, task_dir: Path, target: Path, _owner: str | None = None) -> dict:
     """Verify that ``target`` is the current, task-owned managed write lane."""
     repo, task_dir, target = _absolute(repo), _absolute(task_dir), _absolute(target)
     item = inspect_worktree(repo, target)
@@ -290,14 +290,7 @@ def inspect_for_write(repo: Path, task_dir: Path, target: Path, expected_owner: 
     record = matching[0] if len(matching) == 1 else {}
     owner = record.get("owner")
     recorded_owner = owner.strip() if isinstance(owner, str) and owner.strip() else None
-    expected_owner = expected_owner.strip() if isinstance(expected_owner, str) and expected_owner.strip() else None
     require("managed", record.get("managed") is True, "task ownership entry does not mark the lane managed")
-    require("expected_owner", expected_owner is not None, "expected owner is required; rerun with --owner <expected-owner>")
-    require(
-        "owner",
-        recorded_owner is not None and expected_owner is not None and recorded_owner == expected_owner,
-        "task ownership entry has no non-empty owner" if recorded_owner is None else f"task ownership entry owner {recorded_owner!r} does not match expected owner {expected_owner!r}",
-    )
     require("recorded_branch", isinstance(record.get("branch"), str) and record.get("branch") == item.branch, f"task branch {record.get('branch')!r} does not match Git branch {item.branch!r}")
     common = _common_git_dir(repo)
     recorded_common = record.get("common_git_dir")
@@ -313,7 +306,6 @@ def inspect_for_write(repo: Path, task_dir: Path, target: Path, expected_owner: 
         "task": task_dir,
         "path": target,
         "owner": recorded_owner,
-        "expected_owner": expected_owner,
         "branch": item.branch,
         "head": item.head,
         "dirty": item.dirty,

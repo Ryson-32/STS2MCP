@@ -95,11 +95,7 @@ def cmd_add_context(args: argparse.Namespace) -> int:
     jsonl_file = target_dir / jsonl_name
     full_path = repo_root / path
     if not full_path.exists() and is_shared_spec_reference(path):
-        resolved_shared = resolve_shared_spec_reference(
-            path,
-            repo_root,
-            task_dir=target_dir,
-        )
+        resolved_shared = resolve_shared_spec_reference(path, repo_root)
         if resolved_shared is not None:
             full_path = resolved_shared
 
@@ -236,11 +232,7 @@ def _resolve_context_entry_path(
     """
     repo_path = repo_root / file_path
     if not repo_path.exists() and is_shared_spec_reference(file_path):
-        return resolve_shared_spec_reference(
-            file_path,
-            repo_root,
-            task_dir=task_dir,
-        )
+        return resolve_shared_spec_reference(file_path, repo_root)
     if task_dir is None:
         return repo_path
 

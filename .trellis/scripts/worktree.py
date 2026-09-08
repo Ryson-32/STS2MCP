@@ -130,7 +130,7 @@ def main() -> int:
                     "ok": False, "for_write": True,
                     "repo": current_repo, "requested_repo": repo,
                     "task": args.task, "path": args.path,
-                    "owner": None, "expected_owner": args.owner,
+                    "owner": None,
                     "branch": None, "head": None, "dirty": None,
                     "checks": {"repo_override": False}, "errors": [error],
                 }, default=_path_json, ensure_ascii=False, indent=2))
@@ -146,17 +146,13 @@ def main() -> int:
     if task is None:
         error = f"task not found or outside .trellis/tasks: {args.task}"
         if args.command == "inspect" and args.for_write and args.json:
-            expected_owner = args.owner.strip() if isinstance(args.owner, str) and args.owner.strip() else None
-            errors = [error]
-            if expected_owner is None:
-                errors.append("expected owner is required; rerun with --owner <expected-owner>")
             print(json.dumps({
                 "ok": False, "for_write": True, "repo": repo,
                 "task": args.task, "path": args.path,
-                "owner": None, "expected_owner": expected_owner,
+                "owner": None,
                 "branch": None, "head": None, "dirty": None,
-                "checks": {"task_registry": False, "expected_owner": expected_owner is not None},
-                "errors": errors,
+                "checks": {"task_registry": False},
+                "errors": [error],
             }, default=_path_json, ensure_ascii=False, indent=2))
         else:
             print(f"Error: {error}", file=sys.stderr)
@@ -194,7 +190,7 @@ def main() -> int:
         assert create_owner is not None
         print("  Before writing, run from the worktree:")
         print(f"    cd {_shell_quote(outcome.path)}")
-        print(f"    python .trellis/scripts/worktree.py inspect {_shell_quote(task)} --path {_shell_quote(outcome.path)} --for-write --owner {_shell_quote(create_owner)} --json")
+        print(f"    python .trellis/scripts/worktree.py inspect {_shell_quote(task)} --path {_shell_quote(outcome.path)} --for-write --json")
     return 0 if outcome.status in ("created", "moved", "removed") else 1
 
 

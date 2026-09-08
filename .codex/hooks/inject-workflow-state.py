@@ -421,8 +421,8 @@ def _load_hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _shared_spec_context(root: Path, data: dict, platform: str | None) -> str:
-    """Prepare the optional central shared-spec pin for this main session."""
+def _shared_spec_context(root: Path) -> str:
+    """Prepare the latest available central shared-spec context."""
     scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -432,12 +432,7 @@ def _shared_spec_context(root: Path, data: dict, platform: str | None) -> str:
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(
-            root,
-            platform_input=data,
-            platform=platform,
-            allow_remote=True,
-        )
+        context = ensure_shared_spec_context(root)
         return render_shared_spec_context(context)
     except Exception:
         return (
@@ -490,7 +485,7 @@ def main() -> int:
         parts.append(breadcrumb)
         breadcrumb = "\n\n".join(parts)
 
-    shared_context = _shared_spec_context(root, data, platform)
+    shared_context = _shared_spec_context(root)
     if shared_context:
         breadcrumb = f"{shared_context}\n\n{breadcrumb}"
 

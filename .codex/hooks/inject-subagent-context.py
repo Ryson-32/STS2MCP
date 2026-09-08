@@ -263,9 +263,7 @@ def _real_path_contained(base_real: str, target_real: str) -> bool:
         return False
 
 
-def _resolve_shared_path(
-    base_path: str, file_path: str, task_dir: str | None = None
-) -> str | None:
+def _resolve_shared_path(base_path: str, file_path: str) -> str | None:
     scripts_dir = Path(base_path) / DIR_WORKFLOW / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -277,24 +275,18 @@ def _resolve_shared_path(
 
         if not is_shared_spec_reference(file_path):
             return None
-        resolved = resolve_shared_spec_reference(
-            file_path,
-            Path(base_path),
-            task_dir=task_dir,
-        )
+        resolved = resolve_shared_spec_reference(file_path, Path(base_path))
         return str(resolved) if resolved is not None else None
     except Exception:
         return None
 
 
-def _read_file_bytes(
-    base_path: str, file_path: str, task_dir: str | None = None
-) -> bytes | None:
+def _read_file_bytes(base_path: str, file_path: str) -> bytes | None:
     """Read raw file bytes, return None if file doesn't exist."""
     full_path = os.path.join(base_path, file_path)
     trusted_shared = False
     if not os.path.exists(full_path):
-        shared_path = _resolve_shared_path(base_path, file_path, task_dir)
+        shared_path = _resolve_shared_path(base_path, file_path)
         if shared_path:
             full_path = shared_path
             trusted_shared = True
@@ -374,10 +366,9 @@ def _materialize_file(
     reason: str,
     limits: dict[str, int],
     budget: _Budget,
-    task_dir: str | None = None,
 ) -> str | None:
     """Read a JSONL-referenced file, apply the per-file cap, then budget it."""
-    data = _read_file_bytes(base_path, file_path, task_dir)
+    data = _read_file_bytes(base_path, file_path)
     if data is None:
         return None
 
@@ -403,13 +394,12 @@ def _materialize_directory(
     limits: dict[str, int],
     budget: _Budget,
     max_files: int = 20,
-    task_dir: str | None = None,
 ) -> list[str]:
     """Read all .md files in a directory, applying the same per-file and
     total caps as a single-file JSONL entry."""
     full_path = os.path.join(base_path, dir_path)
     if not os.path.exists(full_path):
-        shared_path = _resolve_shared_path(base_path, dir_path, task_dir)
+        shared_path = _resolve_shared_path(base_path, dir_path)
         if shared_path:
             full_path = shared_path
     if not os.path.exists(full_path) or not os.path.isdir(full_path):
@@ -424,9 +414,7 @@ def _materialize_directory(
         )
         for filename in md_files[:max_files]:
             relative_path = os.path.join(dir_path, filename)
-            block = _materialize_file(
-                base_path, relative_path, reason, limits, budget, task_dir
-            )
+            block = _materialize_file(base_path, relative_path, reason, limits, budget)
             if block:
                 blocks.append(block)
     except Exception:
@@ -505,7 +493,6 @@ def _materialize_jsonl_entries(
     jsonl_path: str,
     limits: dict[str, int],
     budget: _Budget,
-    task_dir: str | None = None,
 ) -> list[str]:
     """Materialize every entry in a jsonl context file into context blocks,
     applying per-file and total budget caps."""
@@ -519,7 +506,6 @@ def _materialize_jsonl_entries(
                     entry["reason"],
                     limits,
                     budget,
-                    task_dir=task_dir,
                 )
             )
         else:
@@ -529,7 +515,6 @@ def _materialize_jsonl_entries(
                 entry["reason"],
                 limits,
                 budget,
-                task_dir,
             )
             if block:
                 blocks.append(block)
@@ -548,9 +533,7 @@ def get_agent_context(
     Reads implement.jsonl or check.jsonl only when that optional manifest exists.
     """
     agent_jsonl = f"{task_dir}/{agent_type}.jsonl"
-    blocks = _materialize_jsonl_entries(
-        repo_root, agent_jsonl, limits, budget, task_dir
-    )
+    blocks = _materialize_jsonl_entries(repo_root, agent_jsonl, limits, budget)
     if not blocks:
         # Zero curated context reaches the model silently otherwise — the
         # stderr WARN above never enters any session (#573). Put the fact in
@@ -1174,13 +1157,7 @@ def _shared_specs_declared(repo_root: str) -> bool:
         return False
 
 
-def _shared_spec_context_text(
-    repo_root: str,
-    input_data: dict,
-    task_dir: str | None,
-    *,
-    allow_remote: bool = False,
-) -> str:
+def _shared_spec_context_text(repo_root: str) -> str:
     scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -1190,13 +1167,7 @@ def _shared_spec_context_text(
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(
-            Path(repo_root),
-            task_dir=task_dir,
-            platform_input=input_data,
-            platform=_detect_platform(input_data),
-            allow_remote=allow_remote,
-        )
+        context = ensure_shared_spec_context(Path(repo_root))
         return render_shared_spec_context(context)
     except Exception:
         if not _shared_specs_declared(repo_root):
@@ -1256,9 +1227,7 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         if unresolved_task:
             return
     if not task_dir and subagent_type in AGENTS_REQUIRE_TASK:
-        shared_context = _shared_spec_context_text(
-            repo_root, input_data, None, allow_remote=False
-        )
+        shared_context = _shared_spec_context_text(repo_root)
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "SubagentStart",
@@ -1275,9 +1244,7 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         if not task_dir:
             return
 
-    shared_context = _shared_spec_context_text(
-        repo_root, input_data, task_dir, allow_remote=False
-    )
+    shared_context = _shared_spec_context_text(repo_root)
 
     output = {
         "hookSpecificOutput": {
@@ -1452,7 +1419,7 @@ def main():
     is_finish_phase = "[finish]" in original_prompt.lower()
 
     # Get role context first; shared context must be included before the final
-    # role prompt is built so every PreToolUse host receives the pinned rules.
+    # role prompt is built so every PreToolUse host receives current rules.
     if subagent_type == AGENT_IMPLEMENT:
         assert task_dir is not None  # validated above
         context = get_implement_context(repo_root, task_dir)
@@ -1470,9 +1437,7 @@ def main():
     else:
         sys.exit(0)
 
-    shared_context = _shared_spec_context_text(
-        repo_root, input_data, task_dir, allow_remote=False
-    )
+    shared_context = _shared_spec_context_text(repo_root)
     if shared_context:
         context = f"{shared_context}\n\n{context}"
 

@@ -560,7 +560,7 @@ def get_context_json(repo_root: Path | None = None) -> dict:
     if pkg_git_info:
         result["packageGit"] = pkg_git_info
 
-    shared_specs = ensure_shared_spec_context(repo_root, allow_remote=False)
+    shared_specs = ensure_shared_spec_context(repo_root)
     if shared_specs.configured:
         result["sharedSpecs"] = shared_specs.to_dict()
 
@@ -680,9 +680,7 @@ def get_context_text(repo_root: Path | None = None) -> str:
         lines.append(packages_text)
         lines.append("")
 
-    shared_specs = render_shared_spec_context(
-        ensure_shared_spec_context(repo_root, allow_remote=True)
-    )
+    shared_specs = render_shared_spec_context(ensure_shared_spec_context(repo_root))
     if shared_specs:
         lines.append(shared_specs)
         lines.append("")
