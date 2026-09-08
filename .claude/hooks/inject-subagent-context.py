@@ -1037,45 +1037,6 @@ def _codex_subagent_type(input_data: dict) -> str:
 CODEX_NATIVE_BOOTSTRAP_MAX_BYTES = 6000
 
 
-def _compact_shared_spec_context(shared_context: str) -> str:
-    """Keep only the verified shared status/pin and published index path."""
-    lines = [line.strip() for line in shared_context.splitlines() if line.strip()]
-    opening = next(
-        (line for line in lines if line.startswith("<shared-spec-context ")), ""
-    )
-    index_line = ""
-    for line in lines:
-        marker = "Published index:"
-        if marker in line:
-            index_line = line[line.index(marker):]
-            break
-    if not opening:
-        return (
-            '<shared-spec-context status="unavailable">\n'
-            "No verified shared-spec index path was available from the hook repository.\n"
-            "</shared-spec-context>"
-        )
-
-    summary = [opening]
-    if index_line:
-        summary.append(index_line)
-    elif 'status="blocked"' in opening:
-        reason = next(
-            (
-                line
-                for line in lines
-                if not line.startswith("<")
-                and not line.startswith("Central shared Trellis rules")
-            ),
-            "Shared-spec resolution is blocked; no verified index path is available.",
-        )
-        summary.append(reason)
-    else:
-        summary.append("No verified shared-spec index path was reported.")
-    summary.append("</shared-spec-context>")
-    return "\n".join(summary)
-
-
 def _existing_codex_skill_paths(repo_root: str) -> list[str]:
     """Return exact existing project skill entrypoints, never guessed user paths."""
     skill_root = Path(repo_root) / ".agents" / "skills"
@@ -1146,7 +1107,7 @@ def _codex_native_bootstrap(
             "in the dispatch prompt is authoritative, including `Active task: none`."
         )
     )
-    context = f"""{marker}# Trellis Native {role.title()} Subagent{suffix}
+    bootstrap = f"""{marker}# Trellis Native {role.title()} Subagent{suffix}
 
 Role (immutable for follow-up turns): `{subagent_type}`
 Parent task candidate: {candidate}
@@ -1155,10 +1116,6 @@ Hook repository candidate: {Path(repo_root).resolve()}
 {fallback_text}
 The task path locates artifacts only. Keep the assigned repository or worktree
 as the command cwd and validate it before writes. Do not borrow another session.
-
-## Shared spec candidate
-
-{_compact_shared_spec_context(shared_context)}
 
 ## Exact existing skill candidates
 
@@ -1170,7 +1127,12 @@ discover available FastCtx local-file tools once and use them for local reads,
 including known exact paths. Record a concrete unavailable/error reason before
 local fallback, use a separate semantic-search capability for relationships,
 and read selected task artifacts, skills, and rules to EOF."""
-    return _bound_codex_native_bootstrap(context)
+    bounded_bootstrap = _bound_codex_native_bootstrap(bootstrap)
+    return (
+        f"{shared_context}\n\n{bounded_bootstrap}"
+        if shared_context
+        else bounded_bootstrap
+    )
 
 
 def build_codex_subagent_context(

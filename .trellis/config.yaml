@@ -90,3 +90,8 @@ shared_specs:
   registry: https://github.com/Ryson-32/trellis-shared-spec.git
   ref: main
   path: spec/shared
+  auto_inject:
+    - "safe-workflow-and-efficiency.md"
+    - "language-general.md"
+    - "evidence-and-verification.md"
+    - "engineering-principles.md"

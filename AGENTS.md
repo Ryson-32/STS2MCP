@@ -37,9 +37,9 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 共享规则由 Trellis 会话缓存固定到已验证版本，不复制到项目 Git。新主会话通常由 hook 完成一次检查；当前上下文没有注入共享索引、版本和实际路径时，运行：
 
-`python .trellis/scripts/shared_spec_cache.py ensure --json`
+`python .trellis/scripts/shared_spec_cache.py ensure`
 
-从返回的 `index_path` 读取路由表，再按当前任务选择直接命中的 owner；不要传递式全量加载。每次完整读取一个选中的文件到 EOF。同一上下文已完整读取且版本未变时可以复用。
+命令与 hook 共用输出：固定版本的索引及已配置规范全文。索引标记“全文已随本次上下文注入”的同版规范一般无需重读；其余按当前任务选择直接命中的 owner，每次完整读取一个文件到 EOF，不做传递式全量加载。新上下文不可沿用旧的已注入标记。机器读取可加 `--json`，完整内容在 `context` 字段。
 
 旧逻辑引用 `.trellis/spec/shared/<owner>.md` 继续有效。需要实际文件路径时运行 `python .trellis/scripts/shared_spec_cache.py resolve <logical-ref> --json`，使用返回的验证缓存路径；不要猜测缓存目录。
 

@@ -46,11 +46,19 @@ def main() -> int:
             allow_remote=not args.offline,
         )
         payload = context.to_dict()
-        payload["context"] = render_shared_spec_context(context)
+        # The explicit recovery CLI returns every readable selected body. Hook
+        # callers keep the renderer's bounded default.
+        payload["context"] = render_shared_spec_context(context, max_bytes=0)
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
-            print(payload["context"] or "Shared specs are not configured.")
+            rendered = payload["context"] or "Shared specs are not configured."
+            encoded = f"{rendered}\n".encode("utf-8")
+            binary_stdout = getattr(sys.stdout, "buffer", None)
+            if binary_stdout is not None:
+                binary_stdout.write(encoded)
+            else:
+                sys.stdout.write(encoded.decode("utf-8"))
         return 0 if not context.write_blocked else 2
 
     resolved = resolve_shared_spec_reference(

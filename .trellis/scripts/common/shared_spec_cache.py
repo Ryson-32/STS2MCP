@@ -9,6 +9,7 @@ not dirty consumer Git state.
 from __future__ import annotations
 
 import hashlib
+from html import escape as html_escape
 import io
 import json
 import os
@@ -33,6 +34,10 @@ ARCHIVE_TIMEOUT_SECONDS = 2
 LOCK_WAIT_SECONDS = 1
 LOCK_STALE_SECONDS = 30
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
+DEFAULT_AUTO_INJECT_CONTEXT_BYTES = 128 * 1024
+MAX_AUTO_INJECT_FILES = 64
+MAX_AUTO_INJECT_PATH_BYTES = 512
+AUTO_INJECT_MARKER = "[全文已随本次上下文注入，同版本一般无需重读]"
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,7 @@ class SharedSpecConfig:
     ref: str
     path: str
     registry_key: str
+    auto_inject: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,7 @@ class SharedSpecContext:
     write_blocked: bool = False
     source: str | None = None
     routes: list[dict[str, str]] | None = None
+    auto_inject: list[dict[str, str]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -84,6 +91,23 @@ def _contains_embedded_credentials(value: str) -> bool:
     return parsed.username is not None or parsed.password is not None
 
 
+def _safe_auto_inject_path(value: str) -> str | None:
+    """Normalize one Markdown path without accepting absolute-path spellings."""
+    normalized = value.strip().replace("\\", "/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or re.match(r"^[A-Za-z]:", normalized)
+        or normalized.endswith("/")
+    ):
+        return None
+    path = PurePosixPath(normalized)
+    if any(part in ("", ".", "..") for part in path.parts):
+        return None
+    safe = path.as_posix()
+    return safe if PurePosixPath(safe).suffix.lower() == ".md" else None
+
+
 def load_shared_spec_config(repo_root: Path) -> tuple[SharedSpecConfig | None, str | None]:
     """Read and validate the optional shared-spec registry configuration."""
     section = _load_config(repo_root).get("shared_specs")
@@ -95,6 +119,7 @@ def load_shared_spec_config(repo_root: Path) -> tuple[SharedSpecConfig | None, s
     registry = section.get("registry")
     ref = section.get("ref", "main")
     source_path = section.get("path", "spec/shared")
+    auto_inject_value = section.get("auto_inject", [])
     if (
         not isinstance(registry, str)
         or not registry.strip()
@@ -115,12 +140,37 @@ def load_shared_spec_config(repo_root: Path) -> tuple[SharedSpecConfig | None, s
     if _contains_embedded_credentials(registry):
         return None, "shared_specs.registry must not contain embedded credentials"
 
+    if not isinstance(auto_inject_value, list):
+        return None, "shared_specs.auto_inject must be a list of relative Markdown paths"
+    if len(auto_inject_value) > MAX_AUTO_INJECT_FILES:
+        return None, f"shared_specs.auto_inject may contain at most {MAX_AUTO_INJECT_FILES} paths"
+    auto_inject: list[str] = []
+    seen_auto_inject: set[str] = set()
+    for value in auto_inject_value:
+        if not isinstance(value, str):
+            return None, "shared_specs.auto_inject must contain only relative Markdown paths"
+        normalized = _safe_auto_inject_path(value)
+        if normalized is None:
+            return None, f"shared_specs.auto_inject contains an unsafe Markdown path: {value!r}"
+        if len(normalized.encode("utf-8")) > MAX_AUTO_INJECT_PATH_BYTES:
+            return None, f"shared_specs.auto_inject path exceeds {MAX_AUTO_INJECT_PATH_BYTES} UTF-8 bytes"
+        if normalized in seen_auto_inject:
+            return None, f"shared_specs.auto_inject contains a duplicate path: {normalized}"
+        seen_auto_inject.add(normalized)
+        auto_inject.append(normalized)
+
     key_material = json.dumps(
         {"registry": registry, "ref": ref, "path": source_path},
         sort_keys=True,
         separators=(",", ":"),
     )
-    return SharedSpecConfig(registry, ref, source_path, _hash(key_material)), None
+    return SharedSpecConfig(
+        registry,
+        ref,
+        source_path,
+        _hash(key_material),
+        tuple(auto_inject),
+    ), None
 
 
 def get_shared_spec_cache_root() -> Path:
@@ -654,17 +704,26 @@ def _routing_rows(source_root: Path) -> list[dict[str, str]]:
 
 def _owners(
     config: SharedSpecConfig, sha: str
-) -> tuple[str, dict[str, str], list[dict[str, str]]]:
+) -> tuple[str, dict[str, str], list[dict[str, str]], list[dict[str, str]]]:
     snapshot = _snapshot_dir(config, sha)
     source_root = snapshot.joinpath(*PurePosixPath(config.path).parts)
     owners: dict[str, str] = {}
     for path in sorted(source_root.rglob("*.md")):
         relative = path.relative_to(source_root).as_posix()
         owners[f"{LOGICAL_SHARED_PREFIX}/{relative}"] = str(path.resolve())
+    auto_inject = [
+        {
+            "path": relative,
+            "logical": f"{LOGICAL_SHARED_PREFIX}/{relative}",
+            "absolute": str(source_root.joinpath(*PurePosixPath(relative).parts).resolve()),
+        }
+        for relative in config.auto_inject
+    ]
     return (
         str((source_root / "index.md").resolve()),
         owners,
         _routing_rows(source_root),
+        auto_inject,
     )
 
 
@@ -737,7 +796,7 @@ def ensure_shared_spec_context(
         if allow_remote and not attempted and family_sha is None:
             _, remote_error = _fetch_snapshot(config)
             _atomic_write_json(attempt_path, {"attempted": True})
-        index_path, owners, routes = _owners(config, pinned_sha)
+        index_path, owners, routes, auto_inject = _owners(config, pinned_sha)
         return SharedSpecContext(
             True,
             True,
@@ -752,6 +811,7 @@ def ensure_shared_spec_context(
             ),
             source="session" if session_sha else "task-family",
             routes=routes,
+            auto_inject=auto_inject,
         )
 
     selected_sha: str | None = None
@@ -792,7 +852,7 @@ def ensure_shared_spec_context(
     snapshot, error = _validate_snapshot(config, selected_sha)
     if snapshot is None:
         return _blocked(f"Selected shared-spec snapshot failed validation: {error}.")
-    index_path, owners, routes = _owners(config, selected_sha)
+    index_path, owners, routes, auto_inject = _owners(config, selected_sha)
     warning = None
     status = "ready"
     if source == "verified-cache":
@@ -809,6 +869,7 @@ def ensure_shared_spec_context(
         False,
         source,
         routes,
+        auto_inject,
     )
 
 
@@ -866,7 +927,26 @@ def resolve_shared_spec_reference(
     return resolved if resolved.exists() else None
 
 
-def render_shared_spec_context(context: SharedSpecContext) -> str:
+def _auto_inject_recovery(logical: str, *, restore_cache: bool) -> str:
+    resolve = f"python .trellis/scripts/shared_spec_cache.py resolve {logical}"
+    if restore_cache:
+        return (
+            "Run `python .trellis/scripts/shared_spec_cache.py ensure` to diagnose or restore the "
+            f"verified cache, then run `{resolve}` and read the returned file."
+        )
+    return f"Run `{resolve}` and read the returned file."
+
+
+def render_shared_spec_context(
+    context: SharedSpecContext,
+    *,
+    max_bytes: int = DEFAULT_AUTO_INJECT_CONTEXT_BYTES,
+) -> str:
+    """Render one truthful shared-spec block, including only whole selected bodies.
+
+    ``max_bytes`` limits the complete UTF-8 block. Zero disables that renderer
+    budget for explicit CLI recovery; hook callers use the safe default.
+    """
     if not context.configured:
         return ""
     if not context.available:
@@ -876,17 +956,118 @@ def render_shared_spec_context(context: SharedSpecContext) -> str:
             "Do not perform writes that depend on shared Trellis rules until `.trellis/scripts/shared_spec_cache.py ensure` succeeds.\n"
             "</shared-spec-context>"
         )
-    lines = [
-        f'<shared-spec-context status="{context.status}" sha="{context.sha}">',
-        f"Central shared Trellis rules are pinned for this session/task family. Published index: {context.index_path}",
-        "Select every directly matching owner from this published when-to-read index, then read its full body on demand:",
-    ]
-    for route in context.routes or []:
-        lines.append(f"- {route['when']} -> {route['owner']}: {route['path']}")
-    if not context.routes:
-        for logical, absolute in (context.owners or {}).items():
-            lines.append(f"- {logical} -> {absolute}")
-    if context.warning:
-        lines.append(f"Warning: {context.warning}")
-    lines.append("</shared-spec-context>")
-    return "\n".join(lines)
+    readable: list[tuple[dict[str, str], str]] = []
+    read_failures: dict[str, str] = {}
+    for entry in context.auto_inject or []:
+        relative = entry.get("path", "(unknown)")
+        logical = entry.get("logical", f"{LOGICAL_SHARED_PREFIX}/{relative}")
+        absolute = entry.get("absolute", "")
+        try:
+            raw = Path(absolute).read_bytes()
+            body = raw.decode("utf-8")
+        except (OSError, UnicodeError):
+            read_failures[relative] = (
+                f"- {relative}: full body was not injected because the pinned file could not be read. "
+                + _auto_inject_recovery(logical, restore_cache=True)
+            )
+            continue
+        readable.append((entry, body))
+
+    included: list[tuple[dict[str, str], str]] = []
+    budget_failures: dict[str, str] = {
+        entry["path"]: (
+            f"- {entry['path']}: full body was not injected because the {max_bytes}-byte context budget was exhausted. "
+            + _auto_inject_recovery(entry["logical"], restore_cache=False)
+        )
+        for entry, _ in readable
+    } if max_bytes > 0 else {}
+
+    def build_output(*, include_routes: bool) -> str:
+        included_paths = {
+            os.path.normcase(entry["absolute"]) for entry, _ in included
+        }
+        lines = [
+            f'<shared-spec-context status="{context.status}" sha="{context.sha}">',
+            f"Central shared Trellis rules are pinned for this session/task family. Published index: {context.index_path}",
+            "Select every directly matching owner from this published when-to-read index, then read its full body on demand:",
+        ]
+        if include_routes:
+            route_rows = context.routes or []
+            for route in route_rows:
+                marker = (
+                    f" {AUTO_INJECT_MARKER}"
+                    if os.path.normcase(route["path"]) in included_paths
+                    else ""
+                )
+                lines.append(f"- {route['when']} -> {route['owner']}: {route['path']}{marker}")
+            if not route_rows:
+                for logical, absolute in (context.owners or {}).items():
+                    marker = (
+                        f" {AUTO_INJECT_MARKER}"
+                        if os.path.normcase(absolute) in included_paths
+                        else ""
+                    )
+                    lines.append(f"- {logical} -> {absolute}{marker}")
+        else:
+            lines.append("- Routing rows were omitted to keep this hook context within budget; read the published index above.")
+        if context.warning:
+            lines.append(f"Warning: {context.warning}")
+        if included:
+            lines.extend(["", "Selected shared rule bodies:"])
+            for entry, body in included:
+                relative = html_escape(entry["path"], quote=True)
+                sha = html_escape(context.sha or "", quote=True)
+                body_block = (
+                    f'<shared-spec-body path="{relative}" sha="{sha}" whole="true">'
+                    f"\n{body}"
+                )
+                if not body.endswith(("\n", "\r")):
+                    body_block += "\n"
+                lines.append(body_block + "</shared-spec-body>")
+        failures = [
+            read_failures.get(entry.get("path", ""))
+            or budget_failures.get(entry.get("path", ""))
+            for entry in context.auto_inject or []
+        ]
+        failures = [failure for failure in failures if failure]
+        if failures:
+            lines.extend(["", "Auto-inject recovery:", *failures])
+        lines.append("</shared-spec-context>")
+        return "\n".join(lines)
+
+    if max_bytes <= 0:
+        included.extend(readable)
+        budget_failures.clear()
+        return build_output(include_routes=True)
+
+    include_routes = True
+    output = build_output(include_routes=include_routes)
+    if len(output.encode("utf-8")) > max_bytes:
+        include_routes = False
+        output = build_output(include_routes=include_routes)
+
+    for entry, body in readable:
+        included.append((entry, body))
+        del budget_failures[entry["path"]]
+        candidate = build_output(include_routes=include_routes)
+        if len(candidate.encode("utf-8")) <= max_bytes:
+            output = candidate
+            continue
+        included.pop()
+        budget_failures[entry["path"]] = (
+            f"- {entry['path']}: full body was not injected because the {max_bytes}-byte context budget was exhausted. "
+            + _auto_inject_recovery(entry["logical"], restore_cache=False)
+        )
+
+    output = build_output(include_routes=include_routes)
+    if len(output.encode("utf-8")) > max_bytes:
+        # Validated auto-inject path/count bounds keep the compact recovery form
+        # below the normal limit. This last guard protects synthetic callers.
+        return (
+            f'<shared-spec-context status="{context.status}" sha="{context.sha}">\n'
+            f"Published index: {context.index_path}\n"
+            "Shared rule bodies were not injected because the context budget was exhausted. "
+            "Run `python .trellis/scripts/shared_spec_cache.py ensure`, then resolve and read each configured auto_inject path.\n"
+            "</shared-spec-context>"
+        )
+    return output
