@@ -108,7 +108,8 @@ Skip this step if your change is confined to a single layer.
 Report every violation you find. Then:
 
 - Read-only review → report findings without editing, even if write tools are available.
-- Mechanical and local fix within an explicitly authorized, isolated write scope → fix in place, then re-run affected checks. Preserve other writers' changes.
-- Design changes, unclear ownership, or edits beyond the authorized scope → record evidence and a recommendation for the owning session; do not silently expand the review.
+- Fix within an explicitly authorized, isolated write scope → fix in place, including task-local issues that require technical or design judgment, then re-run affected checks. Preserve other writers' changes.
+- If the review authors or implements an alternative solution, obtain a fresh review from an external conversation that did not participate in that solution before accepting it. Record the review reference and conclusion; a second pass in the same conversation is not independent review.
+- Changes outside the task goal, authority, isolated lane, or cross-work-package/shared contract → record evidence and a recommendation for the owning session; do not silently expand the review.
 
 If a fix would touch files outside the current task's scope, say so and stop instead of widening the change.
