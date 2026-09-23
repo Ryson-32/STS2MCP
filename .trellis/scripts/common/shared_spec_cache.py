@@ -15,9 +15,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tarfile
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -202,6 +204,17 @@ def _registry_dir(config: SharedSpecConfig) -> Path:
     return get_shared_spec_cache_root() / "registries" / config.registry_key
 
 
+def _git_dir(config: SharedSpecConfig) -> Path:
+    registry_dir = _registry_dir(config)
+    active = _read_json(registry_dir / "active-git.json")
+    name = active.get("name") if active else None
+    if isinstance(name, str) and re.fullmatch(r"objects-[0-9a-f]{32}\.git", name):
+        candidate = registry_dir / name
+        if not candidate.is_symlink() and (candidate / "HEAD").is_file():
+            return candidate
+    return registry_dir / "objects.git"
+
+
 def _snapshot_dir(config: SharedSpecConfig, sha: str) -> Path:
     return _registry_dir(config) / "snapshots" / sha
 
@@ -307,7 +320,9 @@ def _build_manifest(
     }
 
 
-def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None, str | None]:
+def _validate_snapshot(
+    config: SharedSpecConfig, sha: str, git_dir: Path | None = None
+) -> tuple[Path | None, str | None]:
     if not SHA_RE.fullmatch(sha):
         return None, "invalid shared-spec SHA"
     snapshot = _snapshot_dir(config, sha)
@@ -331,7 +346,7 @@ def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None,
     if schema == 1:
         # Legacy manifests did not record a tree identity. Reproduce their
         # source once per validation so existing verified caches stay usable.
-        _, source_files, source_error = _git_source_manifest(config, sha)
+        _, source_files, source_error = _git_source_manifest(config, sha, git_dir)
         if source_error:
             return None, source_error
         if expected != source_files:
@@ -339,7 +354,7 @@ def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None,
     else:
         # Enumerating the tree is much cheaper than replaying a full archive and
         # still ties every snapshot byte to a blob in the recorded Git source.
-        source_tree, source_blobs, object_format, source_error = _git_source_blobs(config, sha)
+        source_tree, source_blobs, object_format, source_error = _git_source_blobs(config, sha, git_dir)
         if source_error:
             return None, source_error
         if manifest.get("source_tree") != source_tree:
@@ -384,53 +399,131 @@ def _validate_snapshot(config: SharedSpecConfig, sha: str) -> tuple[Path | None,
 class _SourceLock:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.token = uuid.uuid4().hex
+        self.token = f"trellis-v2:{uuid.uuid4().hex}"
         self.acquired = False
+        self.recovered = False
+        self.error = "shared-spec registry update is busy; retry shortly"
+        self._guard_fd: int | None = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat: threading.Thread | None = None
+
+    def _release_guard(self) -> None:
+        if self._guard_fd is None:
+            return
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                os.lseek(self._guard_fd, 0, os.SEEK_SET)
+                msvcrt.locking(self._guard_fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        os.close(self._guard_fd)
+        self._guard_fd = None
+
+    def _refresh_marker(self) -> None:
+        # Old installed consumers still use the marker's mtime as a lease.
+        while not self._heartbeat_stop.wait(LOCK_STALE_SECONDS / 3):
+            try:
+                if self.path.read_text(encoding="utf-8") != self.token:
+                    return
+                self.path.touch()
+            except (OSError, UnicodeError):
+                return
 
     def __enter__(self) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        guard = self.path.with_name(f"{self.path.name}.guard")
+        try:
+            self._guard_fd = os.open(guard, os.O_RDWR | os.O_CREAT, 0o600)
+            if os.fstat(self._guard_fd).st_size == 0:
+                os.write(self._guard_fd, b"1")
+        except OSError:
+            self.error = "shared-spec registry update guard could not be opened"
+            self._release_guard()
+            return False
         while time.monotonic() < deadline:
             try:
-                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            except FileExistsError:
-                try:
-                    stale = time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS
-                except OSError:
-                    stale = False
-                if stale:
-                    try:
-                        self.path.unlink()
-                    except OSError:
-                        pass
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(self._guard_fd, 0, os.SEEK_SET)
+                    msvcrt.locking(self._guard_fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._guard_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
                 time.sleep(0.05)
-                continue
+        else:
+            self._release_guard()
+            return False
+
+        try:
+            if self.path.exists():
+                if not stat.S_ISREG(self.path.lstat().st_mode):
+                    self.error = "shared-spec update.lock is not a regular file; inspect it manually"
+                    return False
+                marker = self.path.read_text(encoding="utf-8")
+                age = time.time() - self.path.lstat().st_mtime
+                if age <= LOCK_STALE_SECONDS:
+                    self.error = "shared-spec update.lock is in use; retry shortly"
+                    return False
+                if marker and not marker.startswith("trellis-v2:"):
+                    self.error = (
+                        "legacy shared-spec update.lock has no owner proof; inspect the cache writer before removing it"
+                    )
+                    return False
+                # The advisory guard excludes every current-format writer. An old v2
+                # marker or an interrupted empty create can be reclaimed.
+                self.path.unlink()
+                self.recovered = True
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 stream.write(self.token)
             self.acquired = True
+            self._heartbeat = threading.Thread(target=self._refresh_marker, daemon=True)
+            self._heartbeat.start()
             return True
-        return False
+        except (OSError, UnicodeError):
+            self.error = "shared-spec update.lock could not be safely acquired"
+            return False
+        finally:
+            if not self.acquired:
+                self._release_guard()
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         if not self.acquired:
             return
+        self._heartbeat_stop.set()
+        if self._heartbeat is not None:
+            self._heartbeat.join()
         try:
             if self.path.read_text(encoding="utf-8") == self.token:
                 self.path.unlink()
-        except OSError:
+        except (OSError, UnicodeError):
             pass
+        finally:
+            self._release_guard()
 
 
 def _git_env() -> dict[str, str]:
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "Never"
+    # Error classification must not depend on the caller's display language.
+    env["LC_ALL"] = "C"
+    env["LANGUAGE"] = "C"
     return env
 
 
-def _run_git(args: list[str], cwd: Path | None, timeout: int, *, binary: bool = False) -> subprocess.CompletedProcess[Any]:
-    return subprocess.run(
-        ["git", *args],
+def _run_git(
+    args: list[str], cwd: Path | None, timeout: int, *, binary: bool = False, kill_tree: bool = False
+) -> subprocess.CompletedProcess[Any]:
+    command = ["git", *args]
+    kwargs: dict[str, Any] = dict(
         cwd=cwd,
         env=_git_env(),
         stdin=subprocess.DEVNULL,
@@ -439,13 +532,57 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, *, binary: bool = 
         text=not binary,
         encoding=None if binary else "utf-8",
         errors=None if binary else "replace",
-        timeout=timeout,
-        check=False,
     )
+    if not kill_tree:
+        return subprocess.run(command, timeout=timeout, check=False, **kwargs)
+
+    process = subprocess.Popen(
+        command,
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        **kwargs,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException:
+        # A timed-out fetch may leave upload-pack/SSH descendants holding a
+        # Git lock after the direct git process has been killed.
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            # A descendant may still hold the output pipes on Windows if
+            # taskkill was unavailable. Do not turn a timeout into a hang.
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+            process.wait(timeout=2)
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _source_tree_id(config: SharedSpecConfig, sha: str) -> tuple[str | None, str | None]:
-    git_dir = _registry_dir(config) / "objects.git"
+def _source_tree_id(
+    config: SharedSpecConfig, sha: str, git_dir: Path | None = None
+) -> tuple[str | None, str | None]:
+    git_dir = git_dir or _git_dir(config)
     if not (git_dir / "HEAD").is_file():
         return None, "shared-spec Git object cache is missing"
     try:
@@ -471,13 +608,14 @@ def _source_tree_id(config: SharedSpecConfig, sha: str) -> tuple[str | None, str
 def _git_source_manifest(
     config: SharedSpecConfig,
     sha: str,
+    git_dir: Path | None = None,
 ) -> tuple[str | None, dict[str, str] | None, str | None]:
     """Return the Git tree and digests using snapshot materialization semantics."""
-    source_tree, tree_error = _source_tree_id(config, sha)
+    source_tree, tree_error = _source_tree_id(config, sha, git_dir)
     if source_tree is None:
         return None, None, tree_error
 
-    git_dir = _registry_dir(config) / "objects.git"
+    git_dir = git_dir or _git_dir(config)
     try:
         archived = _run_git(
             ["-c", "core.autocrlf=false", "archive", "--format=tar", sha, "--", config.path],
@@ -515,13 +653,14 @@ def _git_source_manifest(
 def _git_source_blobs(
     config: SharedSpecConfig,
     sha: str,
+    git_dir: Path | None = None,
 ) -> tuple[str | None, dict[str, str] | None, str | None, str | None]:
     """Return the source tree and blob identities without replaying an archive."""
-    source_tree, tree_error = _source_tree_id(config, sha)
+    source_tree, tree_error = _source_tree_id(config, sha, git_dir)
     if source_tree is None:
         return None, None, None, tree_error
 
-    git_dir = _registry_dir(config) / "objects.git"
+    git_dir = git_dir or _git_dir(config)
     try:
         listed = _run_git(
             ["ls-tree", "-r", "-z", source_tree],
@@ -572,40 +711,87 @@ def _git_blob_hash(data: bytes, object_format: str) -> str:
     return digest.hexdigest()
 
 
+def _has_shallow_lock(git_dir: Path) -> bool:
+    try:
+        (git_dir / "shallow.lock").lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        # An unreadable lock is still a conflict, never evidence to delete it.
+        return True
+    return True
+
+
+def _new_git_generation(registry_dir: Path, previous: Path) -> tuple[Path | None, str | None]:
+    """Fetch beside a possibly live Git writer while retaining old objects."""
+    candidate = registry_dir / f"objects-{uuid.uuid4().hex}.git"
+    try:
+        initialized = _run_git(["init", "--bare", str(candidate)], None, ARCHIVE_TIMEOUT_SECONDS)
+        if initialized.returncode != 0:
+            return None, "could not initialize an isolated shared-spec object cache"
+        alternates = candidate / "objects" / "info" / "alternates"
+        # Git's alternates file uses LF even on Windows; CR becomes path data.
+        alternates.write_bytes(((previous / "objects").resolve().as_posix() + "\n").encode("utf-8"))
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "could not prepare an isolated shared-spec object cache"
+    return candidate, None
+
+
+def _fetch_failure(result: subprocess.CompletedProcess[str]) -> str:
+    """Classify Git stderr without exposing a remote URL or credential helper output."""
+    details = (result.stderr or "").lower()
+    if "shallow.lock" in details:
+        return "shared-spec Git shallow.lock blocked the fetch; inspect the cache writer and retry"
+    if "authentication failed" in details or "permission denied" in details:
+        return "shared-spec registry authentication failed; check Registry access"
+    if "could not resolve host" in details or "network is unreachable" in details:
+        return "shared-spec registry network lookup failed; check connectivity"
+    if "repository not found" in details or "does not appear to be a git repository" in details:
+        return "shared-spec registry could not be found; check its configured path and ref"
+    return f"shared-spec git fetch exited {result.returncode}; check Registry path, ref, network, and authentication"
+
+
 def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
     registry_dir = _registry_dir(config)
-    with _SourceLock(registry_dir / "update.lock") as acquired:
+    source_lock = _SourceLock(registry_dir / "update.lock")
+    with source_lock as acquired:
         if not acquired:
-            return None, "shared-spec registry update is busy"
+            return None, source_lock.error
 
-        git_dir = registry_dir / "objects.git"
+        git_dir = _git_dir(config)
         if not (git_dir / "HEAD").is_file():
             registry_dir.mkdir(parents=True, exist_ok=True)
             init = _run_git(["init", "--bare", str(git_dir)], None, ARCHIVE_TIMEOUT_SECONDS)
             if init.returncode != 0:
                 return None, "could not initialize the shared-spec object cache"
 
+        new_generation = source_lock.recovered or _has_shallow_lock(git_dir)
+        if new_generation:
+            git_dir, generation_error = _new_git_generation(registry_dir, git_dir)
+            if git_dir is None:
+                return None, generation_error
         try:
             fetched = _run_git(
                 ["fetch", "--no-tags", "--depth=1", config.registry, config.ref],
                 git_dir,
                 FETCH_TIMEOUT_SECONDS,
+                kill_tree=True,
             )
         except subprocess.TimeoutExpired:
-            return None, "shared-spec registry update timed out"
+            return None, "shared-spec registry fetch timed out; retry after checking the cache writer and Git locks"
         if fetched.returncode != 0:
-            return None, "shared-spec registry update failed"
+            return None, _fetch_failure(fetched)
 
         resolved = _run_git(["rev-parse", "FETCH_HEAD^{commit}"], git_dir, ARCHIVE_TIMEOUT_SECONDS)
         sha = resolved.stdout.strip().lower() if resolved.returncode == 0 else ""
         if not SHA_RE.fullmatch(sha):
             return None, "shared-spec registry returned an invalid commit"
 
-        source_tree, tree_error = _source_tree_id(config, sha)
+        source_tree, tree_error = _source_tree_id(config, sha, git_dir)
         if source_tree is None:
             return None, tree_error or "shared-spec registry returned an invalid source tree"
 
-        existing, existing_error = _validate_snapshot(config, sha)
+        existing, existing_error = _validate_snapshot(config, sha, git_dir)
         if existing is None and existing_error and _snapshot_dir(config, sha).exists():
             return None, "the fetched shared-spec SHA already has an invalid immutable snapshot"
 
@@ -647,7 +833,7 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
                 )
                 destination = _snapshot_dir(config, sha)
                 if destination.exists():
-                    checked, _ = _validate_snapshot(config, sha)
+                    checked, _ = _validate_snapshot(config, sha, git_dir)
                     if checked is None:
                         return None, "concurrent shared-spec snapshot validation failed"
                 else:
@@ -659,9 +845,11 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
                 if temp is not None and temp.exists():
                     shutil.rmtree(temp, ignore_errors=True)
 
-        snapshot, validation_error = _validate_snapshot(config, sha)
+        snapshot, validation_error = _validate_snapshot(config, sha, git_dir)
         if snapshot is None:
             return None, validation_error or "shared-spec snapshot validation failed"
+        if new_generation:
+            _atomic_write_json(registry_dir / "active-git.json", {"name": git_dir.name})
         _atomic_write_json(registry_dir / "latest.json", {"sha": sha})
         return sha, None
 
@@ -778,7 +966,7 @@ def ensure_shared_spec_context(
     if selected_sha is None:
         selected_sha, cache_error = _latest_snapshot(config)
         if selected_sha is None:
-            reason = remote_error or cache_error
+            reason = "; ".join(part for part in (remote_error, cache_error) if part)
             return _blocked(f"Shared-spec cache is unavailable: {reason}. Read-only diagnostics may continue; writes that depend on shared rules are blocked.")
 
     snapshot, error = _validate_snapshot(config, selected_sha)
@@ -790,9 +978,11 @@ def ensure_shared_spec_context(
     if source == "verified-cache":
         status = "offline"
         warning = (
-            "The configured shared-spec Registry ref could not be refreshed; using an existing verified cache. Freshness is unconfirmed."
+            f"The configured shared-spec Registry ref could not be refreshed: {remote_error}. "
+            f"Using verified cache SHA {selected_sha}. Freshness is unconfirmed against the configured ref."
             if remote_error
-            else "Registry access was skipped; using an existing verified shared-spec cache. Freshness against the configured ref is unconfirmed."
+            else f"Registry access was skipped; using existing verified shared-spec cache SHA {selected_sha}. "
+                 "Freshness is unconfirmed against the configured ref."
         )
     return SharedSpecContext(
         True,
