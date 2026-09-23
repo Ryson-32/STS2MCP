@@ -792,8 +792,16 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
             return None, tree_error or "shared-spec registry returned an invalid source tree"
 
         existing, existing_error = _validate_snapshot(config, sha, git_dir)
-        if existing is None and existing_error and _snapshot_dir(config, sha).exists():
-            return None, "the fetched shared-spec SHA already has an invalid immutable snapshot"
+        invalid_snapshot = _snapshot_dir(config, sha)
+        if existing is None and existing_error and os.path.lexists(invalid_snapshot):
+            try:
+                if _path_is_link(invalid_snapshot):
+                    return None, "the fetched shared-spec SHA has a linked snapshot; inspect the cache"
+                quarantine = registry_dir / "quarantine"
+                quarantine.mkdir(parents=True, exist_ok=True)
+                invalid_snapshot.rename(quarantine / f"{sha}-{uuid.uuid4().hex}")
+            except OSError:
+                return None, "could not quarantine the invalid shared-spec snapshot; inspect cache permissions"
 
         if existing is None:
             try:
