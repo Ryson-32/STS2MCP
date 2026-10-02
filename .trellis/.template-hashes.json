@@ -102,7 +102,7 @@
     ".codex/agents/trellis-check.toml": "51325a038f83e07111e3cdc055d471e9106f51de52bb990e89c94e79d6e68093",
     ".codex/agents/trellis-implement.toml": "7faba8238f372aa9155010a25e796d37d7e62dabbfec5067e1eea1a2c15670cd",
     ".codex/agents/trellis-research.toml": "be5e00a1c032fd45e19c5524fb8b1bd629135a710f34998a5c6435f98948abbe",
-    ".codex/config.toml": "9f2d20e28f0bc9c886312eca3ad3bba41533ef4615aaaafe25e98152302267bb",
+    ".codex/config.toml": "6b5a19e5b93156171bbbb02f9ce2f0060d4a92e1cc78f72aa7630d1a0fdf0072",
     ".codex/hooks.json": "3315b1313370d790b476cdae5c3109f4a457ad6225b878eb047f67feb95faf4c",
     ".codex/hooks/inject-subagent-context.py": "4ab4d151bed575f145af333ec6beeeb169ff54bdbe8a0afff64614ebb54be616",
     ".codex/hooks/inject-workflow-state.py": "0957f2c94dbfa0faceee85a7141f0ff1ae6c79c3db743c6b70dda46fbc9c10b6",
@@ -163,7 +163,7 @@
     ".trellis/scripts/shared_spec_cache.py": "2d8dde616704cf520c27d3ce405813cc210ea70e44516f69236167c6dafc46f6",
     ".trellis/scripts/task.py": "f8a1c54955d5180ffb82032e3f2b6ddef06437e55c84cc996f9b397f4bd2b88a",
     ".trellis/scripts/worktree.py": "8f99714d33685390bf075c44ad406f094847f434638fcd2dec1114822c098f57",
-    ".trellis/workflow.md": "f5a3a0cb898adc19c20b08dcfde2175969489d1d07225975b9a3ce3f5d05abd8",
+    ".trellis/workflow.md": "3d60cf78a76017ae2bac928fe18c22c8246925ee13a9d13e0e1ab1d76f611fea",
     "AGENTS.md": "4ecf5f5873432c04f85310ccf8ae9baf846199b6752a56b99457d95d018d3156"
   }
 }

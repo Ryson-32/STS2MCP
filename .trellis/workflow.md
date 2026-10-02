@@ -106,8 +106,7 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
   below are the SINGLE source of truth for the per-turn `<workflow-state>`
   breadcrumb that every supported AI platform's UserPromptSubmit hook
   reads. inject-workflow-state.py (Python platforms) and
-  inject-workflow-state.js (OpenCode plugin) only parse them — there is no
-  fallback dict baked into the scripts after v0.5.0-rc.0.
+  inject-workflow-state.js (OpenCode plugin) parse those blocks.
 
   STATUS charset: [A-Za-z0-9_-]+. When the hook can't find a tag, it
   degrades to a generic "Refer to workflow.md for current step." line —
@@ -116,9 +115,8 @@ python ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed g
   INVARIANT (validated by the selected-source profile fixture):
     Every workflow-walkthrough step marked `[required · once]` must have a
     matching enforcement line in its phase's [workflow-state:*] block. The
-    breadcrumb is the only per-turn channel; if a mandatory step isn't
-    mentioned there, the AI silently skips it (Phase 1 planning gate
-    skip and Phase 3.4 commit skip both manifested via this gap).
+    breadcrumb is the per-turn channel for required phase guidance; keep
+    mandatory steps reachable through it.
 
   TAG ↔ PHASE scoping:
     [workflow-state:no_task]      → no active task; before Phase 1
@@ -256,7 +254,7 @@ Load `trellis-before-dev`, read the task and relevant specs, edit within scope, 
 - 3.4 Commit changes `[required · once]`
 - 3.5 Wrap-up reminder
 
-> Note: step 3.1 was folded into 2.2 (final affected-scope check) and 3.4 (commit preamble). Numbering kept stable to avoid breaking external references.
+> Final affected-scope verification belongs to step 2.2; review the complete diff and check results before committing in step 3.4.
 
 <!-- Per-turn breadcrumb: shown while status='completed'.
      Normally cleared by successful archive. A legacy record or interrupted
@@ -648,7 +646,7 @@ Supported events: `after_create / after_start / after_finish / after_archive`. N
 
 ### Installed runtime contract
 
-This generated project does not depend on Trellis monorepo-only specification or test paths. Its installed workflow-state contract is owned by these runtime sources:
+The installed workflow-state contract is owned by these runtime sources:
 
 - `.trellis/workflow.md` — state blocks, phase invariants, and customization contract
 - `.trellis/scripts/task.py` — task lifecycle commands and status transitions
