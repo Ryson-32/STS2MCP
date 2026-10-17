@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import sys
+
+# Preserve fixed source inputs when importing the local helpers.
+sys.dont_write_bytecode = True
+
 from common.paths import get_repo_root
 from common.shared_spec_cache import (
     ensure_shared_spec_context,
@@ -26,6 +31,8 @@ def main() -> int:
     ensure_parser = subparsers.add_parser("ensure", help="load the configured shared-spec ref")
     ensure_parser.add_argument("--offline", action="store_true", help="do not contact the registry")
     ensure_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
+    ensure_parser.add_argument("--bundle", type=Path, help="standard Git bundle used if Registry refresh fails")
+    ensure_parser.add_argument("--bundle-commit", help="exact commit SHA expected from the recovery bundle")
 
     resolve_parser = subparsers.add_parser("resolve", help="resolve a logical shared-spec reference")
     resolve_parser.add_argument("reference")
@@ -38,6 +45,8 @@ def main() -> int:
         context = ensure_shared_spec_context(
             repo_root,
             allow_remote=not args.offline,
+            bundle_path=args.bundle,
+            bundle_commit=args.bundle_commit,
         )
         payload = context.to_dict()
         # The explicit recovery CLI returns every readable selected body. Hook

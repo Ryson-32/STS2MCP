@@ -492,6 +492,19 @@ def get_worktree_root(repo_root: Path | None = None) -> Path:
     return Path.home() / "Workspace" / "worktrees"
 
 
+def get_worktree_sparse_dirs(repo_root: Path | None = None) -> tuple[str, ...]:
+    """Read the project's default materialized worktree directories."""
+    section = _load_config(repo_root).get("worktree")
+    raw = section.get("sparse_dirs") if isinstance(section, dict) else None
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(
+        not isinstance(path, str) or not path.strip() for path in raw
+    ):
+        raise ValueError("worktree.sparse_dirs must be a list of non-empty directory names")
+    return tuple(raw)
+
+
 def get_worktree_branch_prefix(repo_root: Path | None = None) -> str:
     """Return the project branch prefix used by worktree creation."""
     config = _load_config(repo_root)

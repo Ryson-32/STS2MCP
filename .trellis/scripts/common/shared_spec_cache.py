@@ -742,16 +742,30 @@ def _fetch_failure(result: subprocess.CompletedProcess[str]) -> str:
     details = (result.stderr or "").lower()
     if "shallow.lock" in details:
         return "shared-spec Git shallow.lock blocked the fetch; inspect the cache writer and retry"
-    if "authentication failed" in details or "permission denied" in details:
+    if "could not read username" in details or "could not read password" in details or "terminal prompts disabled" in details:
+        return "shared-spec Git non-interactive credentials are unavailable; Registry access is unconfirmed"
+    if "authentication failed" in details or "permission denied (publickey" in details:
         return "shared-spec registry authentication failed; check Registry access"
+    if "permission denied" in details:
+        return "shared-spec Git transport or cache path access was denied; inspect the affected path and transport"
     if "could not resolve host" in details or "network is unreachable" in details:
         return "shared-spec registry network lookup failed; check connectivity"
+    if "couldn't find remote ref" in details:
+        return "shared-spec configured Registry ref could not be found"
+    if "is not a git command" in details or "cannot run" in details:
+        return "shared-spec Git transport tool is unavailable; check the installed Git tools"
     if "repository not found" in details or "does not appear to be a git repository" in details:
-        return "shared-spec registry could not be found; check its configured path and ref"
+        return "shared-spec Registry path or access could not be established; check its configured path and ref"
     return f"shared-spec git fetch exited {result.returncode}; check Registry path, ref, network, and authentication"
 
 
-def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
+def _fetch_snapshot(
+    config: SharedSpecConfig,
+    *,
+    bundle_path: Path | None = None,
+    bundle_commit: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Fetch Git objects and publish through the same verified snapshot path."""
     registry_dir = _registry_dir(config)
     source_lock = _SourceLock(registry_dir / "update.lock")
     with source_lock as acquired:
@@ -771,21 +785,38 @@ def _fetch_snapshot(config: SharedSpecConfig) -> tuple[str | None, str | None]:
             if git_dir is None:
                 return None, generation_error
         try:
+            if bundle_path is not None:
+                verified = _run_git(
+                    ["bundle", "verify", str(bundle_path)], git_dir, FETCH_TIMEOUT_SECONDS,
+                    kill_tree=True,
+                )
+                if verified.returncode != 0:
+                    return None, "shared-spec recovery bundle verification failed (invalid bundle or missing prerequisites)"
+                fetch_args = [
+                    "-c", "fetch.fsckObjects=true", "fetch", "--no-tags",
+                    str(bundle_path), str(bundle_commit),
+                ]
+            else:
+                fetch_args = ["fetch", "--no-tags", "--depth=1", config.registry, config.ref]
             fetched = _run_git(
-                ["fetch", "--no-tags", "--depth=1", config.registry, config.ref],
+                fetch_args,
                 git_dir,
                 FETCH_TIMEOUT_SECONDS,
                 kill_tree=True,
             )
         except subprocess.TimeoutExpired:
-            return None, "shared-spec registry fetch timed out; retry after checking the cache writer and Git locks"
+            return None, "shared-spec Git fetch or bundle verification timed out; retry after checking the cache writer and Git locks"
         if fetched.returncode != 0:
+            if bundle_path is not None:
+                return None, "shared-spec recovery bundle import failed; verify its complete Git objects and requested commit"
             return None, _fetch_failure(fetched)
 
         resolved = _run_git(["rev-parse", "FETCH_HEAD^{commit}"], git_dir, ARCHIVE_TIMEOUT_SECONDS)
         sha = resolved.stdout.strip().lower() if resolved.returncode == 0 else ""
         if not SHA_RE.fullmatch(sha):
             return None, "shared-spec registry returned an invalid commit"
+        if bundle_path is not None and sha != bundle_commit:
+            return None, "shared-spec recovery bundle did not provide the requested commit"
 
         source_tree, tree_error = _source_tree_id(config, sha, git_dir)
         if source_tree is None:
@@ -954,6 +985,8 @@ def ensure_shared_spec_context(
     repo_root: Path,
     *,
     allow_remote: bool = True,
+    bundle_path: Path | None = None,
+    bundle_commit: str | None = None,
 ) -> SharedSpecContext:
     """Load the configured ref or fall back to the latest verified cache."""
     repo_root = repo_root.resolve()
@@ -961,18 +994,48 @@ def ensure_shared_spec_context(
     if config_error:
         return _blocked(f"Shared specs are configured but invalid: {config_error}. Read-only diagnostics may continue; writes that depend on shared rules are blocked.")
     if config is None:
+        if bundle_path is not None or bundle_commit is not None:
+            return _blocked("Shared-spec bundle recovery requires a configured Registry, ref and path.")
         return SharedSpecContext(False, False, "disabled")
+
+    if (bundle_path is None) != (bundle_commit is None):
+        return _blocked("Shared-spec recovery requires both a bundle path and its exact commit SHA.")
+    if bundle_commit is not None and not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", bundle_commit):
+        return _blocked("Shared-spec recovery bundle commit must be a complete lowercase Git SHA.")
+    if bundle_path is not None:
+        bundle_path = Path(bundle_path).expanduser().resolve()
 
     selected_sha: str | None = None
     remote_error: str | None = None
     source = "verified-cache"
     if allow_remote:
-        selected_sha, remote_error = _fetch_snapshot(config)
+        try:
+            selected_sha, remote_error = _fetch_snapshot(config)
+        except FileNotFoundError:
+            remote_error = "shared-spec Git executable or local Registry path is unavailable"
+        except PermissionError:
+            remote_error = "shared-spec Git tool or cache path access was denied"
+        except (OSError, subprocess.TimeoutExpired):
+            remote_error = "shared-spec Git operation failed before a verified snapshot was available"
         if selected_sha:
             source = "remote"
 
+    if selected_sha is None and bundle_path is not None:
+        try:
+            selected_sha, bundle_error = _fetch_snapshot(
+                config, bundle_path=bundle_path, bundle_commit=bundle_commit,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            selected_sha, bundle_error = None, "shared-spec recovery bundle or Git cache could not be accessed"
+        if selected_sha is None:
+            reason = "; ".join(part for part in (remote_error, bundle_error) if part)
+            return _blocked(f"Shared-spec bundle recovery failed: {reason}.")
+
     if selected_sha is None:
-        selected_sha, cache_error = _latest_snapshot(config)
+        try:
+            selected_sha, cache_error = _latest_snapshot(config)
+        except OSError:
+            selected_sha, cache_error = None, "shared-spec cache path could not be read"
         if selected_sha is None:
             reason = "; ".join(part for part in (remote_error, cache_error) if part)
             return _blocked(f"Shared-spec cache is unavailable: {reason}. Read-only diagnostics may continue; writes that depend on shared rules are blocked.")

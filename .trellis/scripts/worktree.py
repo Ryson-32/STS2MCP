@@ -83,6 +83,15 @@ def main() -> int:
     create.add_argument("--base", default="HEAD")
     create.add_argument("--owner")
     create.add_argument("--existing-branch", action="store_true")
+    projection = create.add_mutually_exclusive_group()
+    projection.add_argument(
+        "--sparse-dir", action="append",
+        help="materialize selected directories (repeatable); defaults to project worktree.sparse_dirs",
+    )
+    projection.add_argument(
+        "--full-checkout", action="store_true",
+        help="materialize all tracked files instead of the project's sparse selection",
+    )
 
     inspect = commands.add_parser("inspect")
     inspect.add_argument("task")
@@ -160,7 +169,11 @@ def main() -> int:
     create_owner: str | None = None
     if args.command == "create":
         create_owner = _owner(repo, task, args.owner)
-        outcome = create_worktree(repo, task, branch=args.branch, base=args.base, owner=create_owner, existing_branch=args.existing_branch)
+        outcome = create_worktree(
+            repo, task, branch=args.branch, base=args.base, owner=create_owner,
+            existing_branch=args.existing_branch,
+            sparse_dirs=[] if args.full_checkout else args.sparse_dir,
+        )
     elif args.command == "move":
         outcome = move_worktree(repo, task, args.source, destination=args.destination, confirm_inactive=args.confirm_inactive, adopt_owned=args.adopt_owned, owner=args.owner)
     elif args.command == "cleanup":

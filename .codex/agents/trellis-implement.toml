@@ -28,7 +28,7 @@ This compact kernel is a projection, not the full source of truth. Load the curr
 1. 先从派发或用户提示中确定显式任务。首个非空行 `Active task: <path>` 是 recommended machine-readable 形式，不是 permission gate。其它位置明确给出的 absolute task-directory path（包括 natural-language wording）也有效；若路径指向 `prd.md`，验证后使用其 parent task directory。显式任务具有最高优先级，原生 hook 显示的父任务仅是 candidate，即使出现 `<!-- trellis-hook-injected -->` 也一样。只有任务身份缺失、冲突、含糊或必要写入边界不清时才询问主会话，不得因标准头缺失或不在首行而拒绝明确任务。
 2. 若出现 `Full hook output saved to: <path>`，先完整读取该文件，避免依赖被截断的可见引导。
 3. 命令 cwd 始终保持在派发的仓库或 worktree；任务路径只定位任务材料，可以位于另一仓库。
-4. 若 `<path>/implement.jsonl` 存在，读取清单和每个真实条目；缺失是正常状态，不要创建。随后完整读取 `<path>/prd.md`、可选 `<path>/design.md`、可选 `<path>/implement.md`。
+4. 若 `<path>/implement.jsonl` 存在，读取清单和每个真实条目；缺失是正常状态，不要创建。随后完整读取 `<path>/prd.md`；可选 `<path>/design.md` / `<path>/implement.md` 按当前派发工作包读取，历史按具体问题定位。
 5. 发现一次可用的 FastCtx local-file tools；可用时用它读取本地文件（包括已知精确路径），失败时记录具体 unavailable/error reason 后再回退。理解职责或跨模块关系时使用单独可用的 semantic-search capability。
 6. 从仓库和原生引导公布的真实路径，把选中的项目规则及共享规范 owner 读到 EOF；不得依赖摘录或猜测的用户级 skill 路径。
 
@@ -44,7 +44,7 @@ This compact kernel is a projection, not the full source of truth. Load the curr
 
 - 自主完成调查、方案判断、实现、必要文档与生成副本同步、验证、修正和最终交付；不要把正常的技术选择或下一步退回主会话。
 - 只修改明确授权的目标并保留其它作者的变化。多个代理都可能创建同一可选持久材料时，只有派发明确指定你为唯一 owner 才写。
-- 需要外部 AI/Pro 或独立复核时，自行按现有授权和可用工具发起、保存 URL/结果、等待终态并回收自己打开的页面或资源；不要切换账号或更改用户级配置。
+- 需要外部 AI/Pro 或独立复核时，自行按现有授权和可用工具发起、保存 URL/结果、等待终态并回收自己打开的页面或资源；已登录网页账号切换按项目合同执行，项目未规定时不切换；用户级配置和新增认证不在此授权内。
 - 命令和外部任务由你等到成功、失败、取消或明确超时等终态。优先事件等待；没有事件 API 时低频检查。静默或经过一段时间本身不是失败，不要因暂时无输出就中断。
 - 只在真正阻塞且需要主会话裁决、任务/基线/共享状态变化、或权限边界必须澄清时发送消息；不要发送例行进度消息。
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Reload current shared Trellis rules after a Codex compact event."""
+"""Reload shared rules and this session's recovery entries on start/resume/compact."""
 
 from __future__ import annotations
 
@@ -132,9 +132,26 @@ def main() -> None:
         return
     configure_project_encoding(project_dir)
 
-    context = _shared_spec_context(project_dir)
-    if not context:
+    shared = _shared_spec_context(project_dir)
+    try:
+        from common.session_context import (  # type: ignore[import-not-found]
+            get_session_recovery,
+            render_session_recovery,
+        )
+
+        projection = get_session_recovery(project_dir, hook_input, platform="codex")
+        # sessionRecord is the expected path; only an existing file is a saved session.
+        record = projection.get("sessionRecord")
+        saved = isinstance(record, str) and Path(record).is_file()
+        recovery = render_session_recovery(projection)
+    except Exception:
+        # Older scripts without session recovery still receive shared rules.
+        saved, recovery = False, ""
+    # Without shared rules or a saved session there is nothing to restore;
+    # keep such projects unchanged (#240).
+    if not shared and not saved:
         return
+    context = "\n\n".join(part for part in (shared, recovery) if part)
     result = {
         "suppressOutput": True,
         "systemMessage": f"Trellis context injected ({len(context)} chars)",

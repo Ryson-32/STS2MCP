@@ -27,13 +27,13 @@ This compact kernel is a projection, not the full source of truth. Load the curr
 - 未显式分配时，hook 父任务仅能帮助定向只读搜索，不能授权持久写入。任务身份缺失、冲突、含糊或持久写入边界不清时才询问主会话。
 - 无效或越界路径不授权写入，也不能回退到别的任务；不得因标准头缺失或不在首行而拒绝另一条明确有效路径。
 
-若出现 `Full hook output saved to: <path>`，先完整读取该文件；`<!-- trellis-hook-injected -->` 只证明注入发生。命令 cwd 保持在派发的仓库或 worktree。显式任务存在时读取 `<path>/prd.md`、可选 `<path>/design.md`、可选 `<path>/implement.md`。Do not load `implement.jsonl` or `check.jsonl`；research is role-isolated。
+若出现 `Full hook output saved to: <path>`，先完整读取该文件；`<!-- trellis-hook-injected -->` 只证明注入发生。命令 cwd 保持在派发的仓库或 worktree。显式任务存在时完整读取 `<path>/prd.md`；可选 `<path>/design.md` / `<path>/implement.md` 按当前派发工作包读取，历史按具体问题定位。Do not load `implement.jsonl` or `check.jsonl`；research is role-isolated。
 
 发现一次可用的 FastCtx local-file tools；可用时用它读取本地文件（including known exact paths），失败时记录具体 unavailable/error reason 后再回退。代码关系使用单独可用的 semantic-search capability。把选中的项目规则与共享规范 owner 从真实路径读到 EOF。
 
 ## 持久写入边界
 
-只读派发始终只读。任务型持久研究只能写入已验证的 `{TASK_DIR}/research/`。首次持久写入前，以及显式任务或 worktree 改变后，运行派发提供的完整 preflight；若未提供而又有明确隔离 lane，则在该 lane 运行：
+只读派发始终只读。任务型持久研究只能写入已验证的 `{TASK_DIR}/research/`。项目合同允许共享 checkout 的独占研究分区时，核对实际项目、显式任务和解析后的唯一输出路径后直接在该分区写入，不要求生产隔离 lane 或重复审批；派发提供的适用检查仍须执行。其它情况下，首次持久写入前，以及显式任务或 worktree 改变后，运行派发提供的完整 preflight；若未提供而又有明确隔离 lane，则在该 lane 运行：
 
 `python .trellis/scripts/worktree.py inspect TASK --path LANE --for-write --json`
 
@@ -43,10 +43,10 @@ cwd set to `LANE`，do not pass `--repo`。无法验证 lane 或 preflight 失�
 
 - 自主完成范围确定、内部/外部搜索、来源核验、必要外部 AI/Pro、负面搜索、证据整理和最终交付，不把普通检索步骤退回主会话。
 - 多个代理可能创建同一可选证据时，只有派发指定你为唯一 owner 才写。
-- 外部 AI/Pro 由你按授权发起、保存 URL/结果、等待终态并回收自己打开的页面或资源；不要切换账号或修改用户级配置。
+- 外部 AI/Pro 由你按授权发起、保存 URL/结果、等待终态并回收自己打开的页面或资源；已登录网页账号切换按项目合同执行，项目未规定时不切换；用户级配置和新增认证不在此授权内。
 - 命令和外部任务等到终态；优先事件等待，否则低频检查。静默或经过一段时间本身不是失败。
 - 只在真正阻塞且需要主会话裁决、任务/基线/共享状态变化、或权限边界必须澄清时发送消息；不要发送例行进度消息。
 - 只有派发明确授权 commit、lane 已验证隔离且 commit 只包含你负责的研究材料时，才可精确 commit。禁止 `git push`、`git merge`、共享集成或改写历史。
 
-每个持久主题写入 `<TASK_DIR>/research/<slug>.md`，包含 Query、Scope、Date、Findings（文件与 `file:line`、外部来源、相关规范）及 Caveats / Not Found。完成时自动简洁报告直接结论或所写文件、关键证据、外部复核 URL/结论、commit SHA（若有）和剩余不确定性；不要粘贴整份持久报告。
+需要持久保存时沿用派发明确的输出路径和已有主题材料，并服从项目的研究材料约定；两者都未规定时写入 `<TASK_DIR>/research/<slug>.md`，包含 Query、Scope、Date、Findings（文件与 `file:line`、外部来源、相关规范）及 Caveats / Not Found。不为已完整保存的材料另建重复报告。完成时自动简洁报告直接结论或所写文件、关键证据、外部复核 URL/结论、commit SHA（若有）和剩余不确定性；不要粘贴整份持久报告。
 """

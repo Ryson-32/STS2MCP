@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .active_task import resolve_active_task, resolve_context_key
+from .active_task import resolve_active_task, resolve_context_key, resolve_task_ref
 from .config import get_git_packages
 from .git import run_git
 from .packages_context import get_packages_section
@@ -36,8 +36,6 @@ from .paths import (
     DIR_WORKSPACE,
     count_lines,
     get_active_journal_file,
-    get_current_task,
-    get_current_task_source,
     get_developer,
     get_repo_root,
     get_tasks_dir,
@@ -493,7 +491,82 @@ def get_update_hint(repo_root: Path, context_key: str | None = None) -> str | No
 # JSON Output
 # =============================================================================
 
-def get_context_json(repo_root: Path | None = None) -> dict:
+def get_session_recovery(
+    repo_root: Path,
+    platform_input: dict | None = None,
+    platform: str | None = None,
+) -> dict:
+    """Project only this session's task and existing recovery entry points.
+
+    Task status describes a task record, never a running process. The saved run
+    is unverified, and neither missing identity nor a stale pointer borrows a
+    different session. Hooks use stdin identity without ambient-session fallback.
+    """
+    active = resolve_active_task(
+        repo_root, platform_input, platform,
+        allow_environment_context=platform_input is None,
+    )
+    current = {
+        "path": active.task_path, "source": active.source_type,
+        "contextKey": active.context_key, "stale": active.stale,
+        "state": "stale" if active.stale else "missing",
+        "recoveryFiles": {},
+    }
+    task_dir = resolve_task_ref(active.task_path, repo_root) if active.task_path else None
+    if task_dir is not None and not active.stale:
+        task = load_task(task_dir)
+        if task and isinstance(task.status, str) and task.status and task.status != "unknown":
+            current.update(name=task.name, status=task.status, state="ready")
+        else:
+            current["state"] = "task_error"
+        for name in ("prd.md", "design.md", "implement.md"):
+            path = task_dir / name
+            if path.is_file():
+                current["recoveryFiles"][name] = str(path)
+    session_path = (
+        repo_root / DIR_WORKFLOW / ".runtime" / "sessions" / f"{active.context_key}.json"
+        if active.context_key else None
+    )
+    saved = {}
+    session_error = None
+    if session_path and session_path.is_file():
+        try:
+            saved = json.loads(session_path.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                saved = {}
+                session_error = "session record is not an object"
+        except (OSError, UnicodeError, ValueError) as error:
+            session_error = str(error)
+    result = {
+        "currentTask": current,
+        "sessionRecord": str(session_path) if session_path else None,
+        "currentRun": saved.get("current_run"),
+        "runState": "recorded_unverified" if saved.get("current_run") else "not_recorded",
+    }
+    if session_error:
+        result["sessionError"] = session_error
+    return result
+
+
+def render_session_recovery(recovery: dict) -> str:
+    """Bounded recovery projection shared by CLI text and SessionStart."""
+    stale = (recovery.get("currentTask") or {}).get("stale")
+    return (
+        '<trellis-session-recovery>\n'
+        + json.dumps(recovery, ensure_ascii=False, indent=2)
+        + ('\n[!] Stale session task pointer; select an existing task explicitly.' if stale else '')
+        + '\nRead the current task recoveryFiles before continuing. '
+        'implement.md owns existing assignments and handoffs. '
+        'Task status and recorded runs do not prove live execution.\n'
+        '</trellis-session-recovery>'
+    )
+
+
+def get_context_json(
+    repo_root: Path | None = None,
+    platform_input: dict | None = None,
+    platform: str | None = None,
+) -> dict:
     """Get context as a dictionary.
 
     Args:
@@ -560,6 +633,8 @@ def get_context_json(repo_root: Path | None = None) -> dict:
     if pkg_git_info:
         result["packageGit"] = pkg_git_info
 
+    result.update(get_session_recovery(repo_root, platform_input, platform))
+
     shared_specs = ensure_shared_spec_context(repo_root)
     if shared_specs.configured:
         result["sharedSpecs"] = shared_specs.to_dict()
@@ -607,6 +682,7 @@ def get_context_text(repo_root: Path | None = None) -> str:
         lines.append(
             f"ERROR: Not initialized. Run: python ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
         )
+        lines.append(render_session_recovery(get_session_recovery(repo_root)))
         return "\n".join(lines)
 
     lines.append(f"Name: {developer}")
@@ -625,34 +701,9 @@ def get_context_text(repo_root: Path | None = None) -> str:
     )
 
     # Current task
-    lines.append("## CURRENT TASK")
-    active = resolve_active_task(repo_root)
-    current_task = active.task_path
-    if current_task:
-        current_task_dir = repo_root / current_task
-        source_type, context_key, _ = get_current_task_source(repo_root)
-        lines.append(f"Path: {current_task}")
-        if active.stale:
-            lines.append("[!] Stale session task pointer; select an existing task explicitly.")
-        lines.append(
-            f"Source: {source_type}" + (f":{context_key}" if context_key else "")
-        )
-
-        ct = load_task(current_task_dir)
-        if ct:
-            lines.append(f"Name: {ct.name}")
-            lines.append(f"Status: {ct.status}")
-            lines.append(f"Created: {ct.raw.get('createdAt', 'unknown')}")
-            if ct.description:
-                lines.append(f"Description: {ct.description}")
-
-        # Check for prd.md
-        prd_file = current_task_dir / "prd.md"
-        if prd_file.is_file():
-            lines.append("")
-            lines.append("[!] This task has prd.md - read it for task details")
-    else:
-        lines.append("(none)")
+    recovery = get_session_recovery(repo_root)
+    current_task = recovery["currentTask"]["path"]
+    lines.append(render_session_recovery(recovery))
     lines.append("")
 
     lines.append("## TASK RELATIONSHIPS")
@@ -737,19 +788,7 @@ def get_context_record_json(repo_root: Path | None = None) -> dict:
             })
 
     # Current task
-    current_task_info = None
-    current_task = get_current_task(repo_root)
-    if current_task:
-        source_type, context_key, _ = get_current_task_source(repo_root)
-        ct = load_task(repo_root / current_task)
-        if ct:
-            current_task_info = {
-                "path": current_task,
-                "name": ct.name,
-                "status": ct.status,
-                "source": source_type,
-                "contextKey": context_key,
-            }
+    recovery = get_session_recovery(repo_root)
 
     # Package git repos
     pkg_git_info = _collect_package_git_info(
@@ -767,7 +806,7 @@ def get_context_record_json(repo_root: Path | None = None) -> dict:
             "recentCommits": root_git_info["recentCommits"],
         },
         "myTasks": my_tasks,
-        "currentTask": current_task_info,
+        **recovery,
     }
 
     if pkg_git_info:
@@ -796,6 +835,7 @@ def get_context_text_record(repo_root: Path | None = None) -> str:
         lines.append(
             f"ERROR: Not initialized. Run: python ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
         )
+        lines.append(render_session_recovery(get_session_recovery(repo_root)))
         return "\n".join(lines)
 
     # MY ACTIVE TASKS — first and prominent
@@ -832,20 +872,7 @@ def get_context_text_record(repo_root: Path | None = None) -> str:
     )
 
     # CURRENT TASK
-    lines.append("## CURRENT TASK")
-    current_task = get_current_task(repo_root)
-    if current_task:
-        source_type, context_key, _ = get_current_task_source(repo_root)
-        lines.append(f"Path: {current_task}")
-        lines.append(
-            f"Source: {source_type}" + (f":{context_key}" if context_key else "")
-        )
-        ct = load_task(repo_root / current_task)
-        if ct:
-            lines.append(f"Name: {ct.name}")
-            lines.append(f"Status: {ct.status}")
-    else:
-        lines.append("(none)")
+    lines.append(render_session_recovery(get_session_recovery(repo_root)))
     lines.append("")
 
     lines.append("========================================")

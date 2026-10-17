@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Sequence
 
-from .config import get_worktree_branch_prefix, get_worktree_root
+from .config import get_worktree_branch_prefix, get_worktree_root, get_worktree_sparse_dirs
 from .git import main_worktree_root
 from .io import read_json_checked, write_json
 from .paths import get_tasks_dir
@@ -691,10 +691,16 @@ def _owner(repo: Path, task_dir: Path, explicit: str | None) -> str:
 def create_worktree(
     repo: Path, task_dir: Path, *, branch: str | None = None,
     base: str = "HEAD", owner: str | None = None, existing_branch: bool = False,
+    sparse_dirs: Sequence[str] | None = None,
 ) -> LifecycleOutcome:
     repo, task_dir = _absolute(repo), _absolute(task_dir)
     branch = branch or default_branch(repo, task_dir)
     target = canonical_worktree_path(repo, task_dir, branch)
+    if sparse_dirs is None:
+        try:
+            sparse_dirs = get_worktree_sparse_dirs(repo)
+        except ValueError as exc:
+            return LifecycleOutcome("error", target, str(exc))
     configured_root = _absolute(get_worktree_root(repo))
     if not _is_within(target, configured_root) or _path_chain_has_link(target) or target.exists() or _registration(repo, target)[0]:
         return LifecycleOutcome("preserved", target, "destination already exists or is registered")
@@ -704,12 +710,29 @@ def create_worktree(
             if target.exists() or _registration(repo, target)[0] or _path_chain_has_link(target):
                 return LifecycleOutcome("preserved", target, "destination changed before create")
             args = ["worktree", "add"]
+            if sparse_dirs:
+                args.append("--no-checkout")
             if not existing_branch:
                 args += ["-b", branch]
             args += [str(target), branch if existing_branch else base]
             result = _run_git(repo, args)
             if result.returncode:
                 return LifecycleOutcome("error", target, result.stderr.strip() or "git worktree add failed")
+            if sparse_dirs:
+                result = _run_git(target, ["read-tree", "HEAD"])
+                if not result.returncode:
+                    result = _run_git(target, ["sparse-checkout", "set", "--cone", "--", *sparse_dirs])
+                if not result.returncode:
+                    result = _run_git(target, ["restore", "--source=HEAD", "--worktree", "--", "."])
+                if result.returncode:
+                    check = inspect_worktree(repo, target)
+                    if check.registered and check.same_repository:
+                        _record(repo, task_dir, target, check.branch, _owner(repo, task_dir, owner))
+                    return LifecycleOutcome(
+                        "error", target,
+                        result.stderr.strip() or "sparse checkout failed; registered worktree preserved",
+                        recovery=check.branch,
+                    )
             check = inspect_worktree(repo, target)
             if not (check.exists and check.registered and check.same_repository):
                 return LifecycleOutcome("error", target, "post-create registration or repository identity check failed")
