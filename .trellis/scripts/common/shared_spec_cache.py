@@ -987,6 +987,8 @@ def ensure_shared_spec_context(
     allow_remote: bool = True,
     bundle_path: Path | None = None,
     bundle_commit: str | None = None,
+    session_key: str | None = None,
+    refresh: bool = False,
 ) -> SharedSpecContext:
     """Load the configured ref or fall back to the latest verified cache."""
     repo_root = repo_root.resolve()
@@ -1005,10 +1007,23 @@ def ensure_shared_spec_context(
     if bundle_path is not None:
         bundle_path = Path(bundle_path).expanduser().resolve()
 
+    session_record = None
+    if allow_remote and session_key and bundle_path is None:
+        identity = hashlib.sha256(f"{repo_root}\n{session_key}".encode("utf-8")).hexdigest()
+        session_record = _registry_dir(config) / "sessions" / f"{identity}.json"
+    checked = _read_json(session_record) if session_record and not refresh else None
+
     selected_sha: str | None = None
     remote_error: str | None = None
     source = "verified-cache"
-    if allow_remote:
+    if checked:
+        try:
+            selected_sha, _ = _latest_snapshot(config)
+        except OSError:
+            pass
+        if selected_sha:
+            source = "session-cache"
+    if allow_remote and selected_sha is None:
         try:
             selected_sha, remote_error = _fetch_snapshot(config)
         except FileNotFoundError:
@@ -1043,10 +1058,21 @@ def ensure_shared_spec_context(
     snapshot, error = _validate_snapshot(config, selected_sha)
     if snapshot is None:
         return _blocked(f"Selected shared-spec snapshot failed validation: {error}.")
+    if session_record and not checked:
+        try:
+            _atomic_write_json(session_record, {"source": source})
+        except OSError:
+            pass
     index_path, owners, routes, auto_inject = _owners(config, selected_sha)
     warning = None
     status = "ready"
-    if source == "verified-cache":
+    if source == "session-cache":
+        warning = "Registry checked earlier in this session. Using the latest verified local snapshot."
+        if checked and checked.get("source") == "verified-cache":
+            status = "offline"
+            source = "verified-cache"
+            warning = "The session's Registry check failed. Using a verified local snapshot with unconfirmed freshness."
+    elif source == "verified-cache":
         status = "offline"
         warning = (
             f"The configured shared-spec Registry ref could not be refreshed: {remote_error}. "
@@ -1093,7 +1119,9 @@ def resolve_shared_spec_reference(
     if not is_shared_spec_reference(reference):
         return None
 
-    context = ensure_shared_spec_context(repo_root)
+    context = ensure_shared_spec_context(repo_root, allow_remote=False)
+    if not context.available and context.configured:
+        context = ensure_shared_spec_context(repo_root)
     if not context.available or not context.sha:
         return None
     config, _ = load_shared_spec_config(repo_root)

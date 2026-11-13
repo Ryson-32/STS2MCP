@@ -1157,7 +1157,7 @@ def _shared_specs_declared(repo_root: str) -> bool:
         return False
 
 
-def _shared_spec_context_text(repo_root: str) -> str:
+def _shared_spec_context_text(repo_root: str, input_data: dict) -> str:
     scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
@@ -1167,7 +1167,12 @@ def _shared_spec_context_text(repo_root: str) -> str:
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(Path(repo_root))
+        from common.active_task import resolve_context_key
+
+        context = ensure_shared_spec_context(
+            Path(repo_root),
+            session_key=resolve_context_key(input_data),
+        )
         return render_shared_spec_context(context)
     except Exception:
         if not _shared_specs_declared(repo_root):
@@ -1227,7 +1232,7 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         if unresolved_task:
             return
     if not task_dir and subagent_type in AGENTS_REQUIRE_TASK:
-        shared_context = _shared_spec_context_text(repo_root)
+        shared_context = _shared_spec_context_text(repo_root, input_data)
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "SubagentStart",
@@ -1244,7 +1249,7 @@ def _handle_codex_subagent_start(input_data: dict) -> None:
         if not task_dir:
             return
 
-    shared_context = _shared_spec_context_text(repo_root)
+    shared_context = _shared_spec_context_text(repo_root, input_data)
 
     output = {
         "hookSpecificOutput": {
@@ -1418,8 +1423,8 @@ def main():
     # Check for [finish] marker in prompt (check agent with finish context)
     is_finish_phase = "[finish]" in original_prompt.lower()
 
-    # Get role context first; shared context must be included before the final
-    # role prompt is built so every PreToolUse host receives current rules.
+    # Check the shared source before resolving any task references.
+    shared_context = _shared_spec_context_text(repo_root, input_data)
     if subagent_type == AGENT_IMPLEMENT:
         assert task_dir is not None  # validated above
         context = get_implement_context(repo_root, task_dir)
@@ -1437,7 +1442,6 @@ def main():
     else:
         sys.exit(0)
 
-    shared_context = _shared_spec_context_text(repo_root)
     if shared_context:
         context = f"{shared_context}\n\n{context}"
 

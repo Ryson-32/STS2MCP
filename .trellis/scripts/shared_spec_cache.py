@@ -30,6 +30,8 @@ def main() -> int:
 
     ensure_parser = subparsers.add_parser("ensure", help="load the configured shared-spec ref")
     ensure_parser.add_argument("--offline", action="store_true", help="do not contact the registry")
+    ensure_parser.add_argument("--session-key", help="reuse the verified local snapshot after the session's first refresh")
+    ensure_parser.add_argument("--refresh", action="store_true", help="refresh even when a session has already checked")
     ensure_parser.add_argument("--json", action="store_true", help="emit machine-readable output")
     ensure_parser.add_argument("--bundle", type=Path, help="standard Git bundle used if Registry refresh fails")
     ensure_parser.add_argument("--bundle-commit", help="exact commit SHA expected from the recovery bundle")
@@ -47,11 +49,16 @@ def main() -> int:
             allow_remote=not args.offline,
             bundle_path=args.bundle,
             bundle_commit=args.bundle_commit,
+            session_key=args.session_key,
+            refresh=args.refresh,
         )
         payload = context.to_dict()
         # The explicit recovery CLI returns every readable selected body. Hook
         # callers keep the renderer's bounded default.
-        payload["context"] = render_shared_spec_context(context, max_bytes=0)
+        payload["context"] = (
+            render_shared_spec_context(context)
+            if args.session_key else render_shared_spec_context(context, max_bytes=0)
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
