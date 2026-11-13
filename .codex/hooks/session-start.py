@@ -90,7 +90,7 @@ def _shared_specs_declared(project_dir: Path) -> bool:
         return False
 
 
-def _shared_spec_context(project_dir: Path) -> str:
+def _shared_spec_context(project_dir: Path, hook_input: dict) -> str:
     """Prepare the latest available central shared-spec context."""
     scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
@@ -101,7 +101,13 @@ def _shared_spec_context(project_dir: Path) -> str:
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(project_dir)
+        from common.active_task import resolve_context_key
+
+        context = ensure_shared_spec_context(
+            project_dir,
+            session_key=resolve_context_key(hook_input, platform="codex"),
+            refresh=hook_input.get("source") in {"compact", "clear"},
+        )
         return render_shared_spec_context(context)
     except Exception:
         if not _shared_specs_declared(project_dir):
@@ -132,7 +138,7 @@ def main() -> None:
         return
     configure_project_encoding(project_dir)
 
-    shared = _shared_spec_context(project_dir)
+    shared = _shared_spec_context(project_dir, hook_input)
     try:
         from common.session_context import (  # type: ignore[import-not-found]
             get_session_recovery,

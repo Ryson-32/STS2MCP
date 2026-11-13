@@ -421,7 +421,7 @@ def _load_hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _shared_spec_context(root: Path) -> str:
+def _shared_spec_context(root: Path, data: dict) -> str:
     """Prepare the latest available central shared-spec context."""
     scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
@@ -432,7 +432,12 @@ def _shared_spec_context(root: Path) -> str:
             render_shared_spec_context,
         )
 
-        context = ensure_shared_spec_context(root)
+        from common.active_task import resolve_context_key
+
+        context = ensure_shared_spec_context(
+            root, session_key=resolve_context_key(data, platform=_detect_platform(data)),
+        )
+
         return render_shared_spec_context(context)
     except Exception:
         return (
@@ -485,7 +490,7 @@ def main() -> int:
         parts.append(breadcrumb)
         breadcrumb = "\n\n".join(parts)
 
-    shared_context = _shared_spec_context(root)
+    shared_context = _shared_spec_context(root, data)
     if shared_context:
         breadcrumb = f"{shared_context}\n\n{breadcrumb}"
 
