@@ -102,6 +102,21 @@ def _build_first_reply_notice(update_hint: str | None) -> str:
     )
 
 
+def _build_compact_first_reply_notice(update_hint: str | None) -> str:
+    """Same one-shot contract in fewer words, for a size-limited hook value."""
+    relay = (
+        f"Also relay this Trellis maintenance notice on its own line in that reply: {update_hint}\n"
+        if update_hint else ""
+    )
+    return (
+        "<first-reply-notice>\n"
+        "First visible reply only: briefly acknowledge Trellis SessionStart context in the user's "
+        "request language (fallback `Trellis SessionStart ✓`), then continue in that language.\n"
+        f"{relay}"
+        "</first-reply-notice>"
+    )
+
+
 # Force UTF-8 on stdin/stdout/stderr on Windows. Default codepage there is
 # cp936 / cp1252 / etc. — non-ASCII content (Chinese task names, prd snippets)
 # both in stdin (hook payload from host CLI) and stdout (our emitted blocks)
@@ -216,6 +231,10 @@ def _format_git_state(repo_root: Path) -> str:
 
 
 def _detect_platform(input_data: dict) -> str | None:
+    # `.agents/hooks/` is the Antigravity hook installation, not a shared
+    # skills directory. Its payload uses conversationId and injectSteps.
+    if ".agents" in Path(sys.argv[0]).parts:
+        return "antigravity"
     if isinstance(input_data.get("cursor_version"), str):
         return "cursor"
     # CLAUDE_PROJECT_DIR is a compatibility alias that several hosts set
@@ -819,37 +838,101 @@ def _build_workflow_overview(workflow_path: Path) -> str:
     return "\n".join(out_lines).rstrip()
 
 
-def _shared_spec_context(project_dir: Path, hook_input: dict) -> str:
+def _shared_spec_unavailable(project_dir: Path) -> str:
+    try:
+        declared = "shared_specs:" in (project_dir / ".trellis" / "config.yaml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        declared = False
+    if not declared:
+        return ""
+    return (
+        '<shared-spec-context status="blocked">\n'
+        "The shared-spec cache runtime could not be loaded. Read-only diagnostics may continue; "
+        "writes that depend on shared rules are blocked.\n"
+        "</shared-spec-context>"
+    )
+
+
+def _shared_spec_renderer(project_dir: Path, hook_input: dict, platform: str | None):
+    """Load shared specs once; return a renderer taking an optional character budget.
+
+    On platforms whose per-turn hook checks the transcript (Claude Code), the
+    full block ends with a delivery marker that later turns look for.
+    """
     scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     try:
-        from common.shared_spec_cache import (  # type: ignore[import-not-found]
-            ensure_shared_spec_context,
-            render_shared_spec_context,
-        )
+        from common import shared_spec_cache as cache  # type: ignore[import-not-found]
 
         from common.active_task import resolve_context_key
 
-        context = ensure_shared_spec_context(
+        context = cache.ensure_shared_spec_context(
             project_dir,
-            session_key=resolve_context_key(hook_input, platform=_detect_platform(hook_input)),
+            session_key=resolve_context_key(hook_input, platform=platform),
             refresh=hook_input.get("source") in {"compact", "clear"},
         )
-        return render_shared_spec_context(context)
-    except Exception:
-        try:
-            declared = "shared_specs:" in (project_dir / ".trellis" / "config.yaml").read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            declared = False
-        if not declared:
-            return ""
-        return (
-            '<shared-spec-context status="blocked">\n'
-            "The shared-spec cache runtime could not be loaded. Read-only diagnostics may continue; "
-            "writes that depend on shared rules are blocked.\n"
-            "</shared-spec-context>"
+        delivery_key = (
+            cache.shared_spec_delivery_key(project_dir, context)
+            if platform in getattr(cache, "DELIVERY_PLATFORMS", ())
+            else None
         )
+    except Exception:
+        unavailable = _shared_spec_unavailable(project_dir)
+        return lambda max_chars=0: unavailable
+
+    def render(max_chars: int = 0) -> str:
+        try:
+            if delivery_key is None and not max_chars:
+                return cache.render_shared_spec_context(context)
+            return cache.render_shared_spec_context(
+                context, max_chars=max_chars, delivery_key=delivery_key,
+            )
+        except Exception:
+            return _shared_spec_unavailable(project_dir)
+
+    return render
+
+
+def _context_chars(text: str) -> int:
+    """Length as Claude Code counts it (JavaScript UTF-16 code units)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _fit_hook_context_budget(
+    blocks: list[list], compact_order: list[int], render_shared, shared_index: int,
+) -> str:
+    """Keep the whole SessionStart value inline for Claude Code.
+
+    Claude Code saves a hook context value longer than 10,000 characters to a
+    file and shows the model a 2,000-character preview. A value at or below
+    the guarded ceiling is left unchanged. Above it, sections take their
+    compact form in ``compact_order`` until the design target is met;
+    selected shared rule bodies give way last, only if still above the ceiling.
+    """
+    try:
+        from common.shared_spec_cache import (  # type: ignore[import-not-found]
+            HOOK_CONTEXT_GUARD_CHARS as guard,
+            HOOK_CONTEXT_TARGET_CHARS as target,
+        )
+    except Exception:
+        target, guard = 9_000, 9_800
+
+    def total() -> int:
+        return sum(_context_chars(block[0]) for block in blocks)
+
+    if total() <= guard:
+        return "".join(block[0] for block in blocks)
+    for index in compact_order:
+        if total() <= target:
+            break
+        blocks[index][0] = blocks[index][1]
+    if total() > guard:
+        shared_chars = _context_chars(blocks[shared_index][0])
+        budget = guard - (total() - shared_chars) - 2
+        shared = render_shared(max(budget, 1))
+        blocks[shared_index][0] = f"{shared}\n\n" if shared else ""
+    return "".join(block[0] for block in blocks).rstrip()
 
 
 def main():
@@ -877,7 +960,17 @@ def main():
         "ZCODE_PROJECT_DIR",
     ]
     project_dir = None
+    if _detect_platform(hook_input) == "antigravity":
+        workspaces = hook_input.get("workspacePaths")
+        if isinstance(workspaces, list):
+            project_dir = next(
+                (Path(p).resolve() for p in workspaces
+                 if isinstance(p, str) and (Path(p) / ".trellis").is_dir()),
+                None,
+            )
     for var in project_dir_env_vars:
+        if project_dir is not None:
+            break
         val = os.environ.get(var)
         if val:
             project_dir = Path(_normalize_windows_shell_path(val)).resolve()
@@ -896,64 +989,112 @@ def main():
     )
     allowed_pkgs = _resolve_spec_scope(is_mono, packages, scope_config, task_pkg, default_pkg)
 
-    output = StringIO()
-
+    platform = _detect_platform(hook_input)
     spec_index_paths = _collect_spec_index_paths(trellis_dir, allowed_pkgs)
+    update_hint = _resolve_update_hint(trellis_dir, context_key)
 
-    output.write("""<session-context>
+    # Each block is [current text, compact text]; non-Claude platforms always
+    # receive the first form, joined exactly as before.
+    blocks: list[list] = [[
+        """<session-context>
 Trellis compact SessionStart context. Use it to orient the session; load details on demand.
 </session-context>
 
-""")
-    output.write(_build_first_reply_notice(_resolve_update_hint(trellis_dir, context_key)))
-    output.write("\n\n")
+""",
+        "",
+    ]]
+    blocks.append([
+        f"{_build_first_reply_notice(update_hint)}\n\n",
+        f"{_build_compact_first_reply_notice(update_hint)}\n\n",
+    ])
 
     # Legacy migration warning
     legacy_warning = _check_legacy_spec(trellis_dir, is_mono, packages)
     if legacy_warning:
-        output.write(f"<migration-warning>\n{legacy_warning}\n</migration-warning>\n\n")
+        migration = f"<migration-warning>\n{legacy_warning}\n</migration-warning>\n\n"
+        blocks.append([migration, migration])
 
-    output.write("<current-state>\n")
-    output.write(_build_compact_current_state(trellis_dir, hook_input, spec_index_paths))
-    output.write("\n</current-state>\n\n")
+    state_text = _build_compact_current_state(trellis_dir, hook_input, spec_index_paths)
+    # The compact form drops hints that the compact guidelines repeat.
+    compact_state_text = "\n".join(
+        re.sub(r" Use `[^`]+` only if needed\.$", "", line)
+        for line in state_text.splitlines()
+        if not line.startswith("Spec indexes:")
+    )
+    state_index = len(blocks)
+    blocks.append([
+        f"<current-state>\n{state_text}\n</current-state>\n\n",
+        f"<current-state>\n{compact_state_text}\n</current-state>\n\n",
+    ])
 
-    shared_context = _shared_spec_context(project_dir, hook_input)
-    if shared_context:
-        output.write(shared_context)
-        output.write("\n\n")
+    render_shared = (
+        (lambda max_chars=0: "") if platform == "antigravity"
+        else _shared_spec_renderer(project_dir, hook_input, platform)
+    )
+    shared_context = render_shared()
+    shared_index = len(blocks)
+    shared_block = f"{shared_context}\n\n" if shared_context else ""
+    blocks.append([shared_block, shared_block])
 
-    output.write("<trellis-workflow>\n")
-    output.write(_build_workflow_overview(trellis_dir / "workflow.md"))
-    output.write("\n</trellis-workflow>\n\n")
+    workflow_index = len(blocks)
+    blocks.append([
+        "<trellis-workflow>\n"
+        f"{_build_workflow_overview(trellis_dir / 'workflow.md')}"
+        "\n</trellis-workflow>\n\n",
+        "",
+    ])
 
-    output.write("<guidelines>\n")
-    output.write(
+    guidelines = StringIO()
+    guidelines.write("<guidelines>\n")
+    guidelines.write(
         "Task context order for implementation/check: jsonl entries -> `prd.md` -> "
         "`design.md if present` -> `implement.md if present`. Missing optional artifacts "
         "are skipped for lightweight tasks.\n\n"
     )
-
     if spec_index_paths:
-        output.write("## Available indexes (read on demand)\n")
+        guidelines.write("## Available indexes (read on demand)\n")
         for p in spec_index_paths:
-            output.write(f"- {p}\n")
-        output.write("\n")
-
-    output.write(
+            guidelines.write(f"- {p}\n")
+        guidelines.write("\n")
+    guidelines.write(
         "Discover more via: "
         "`python ./.trellis/scripts/get_context.py --mode packages`\n"
     )
-    output.write("</guidelines>\n\n")
+    guidelines.write("</guidelines>\n\n")
+    index_prefix, index_suffix = ".trellis/spec/", "/index.md"
+    if len(spec_index_paths) > 1 and all(
+        p.startswith(index_prefix) and p.endswith(index_suffix) for p in spec_index_paths
+    ):
+        middles = ",".join(p[len(index_prefix):-len(index_suffix)] for p in spec_index_paths)
+        index_list = f"{index_prefix}{{{middles}}}{index_suffix}"
+    else:
+        index_list = ", ".join(spec_index_paths)
+    compact_indexes = f" Spec indexes (read on demand): {index_list}" if spec_index_paths else ""
+    guidelines_index = len(blocks)
+    blocks.append([
+        guidelines.getvalue(),
+        f"<guidelines>\nWorkflow and phases: .trellis/workflow.md.{compact_indexes}\n</guidelines>\n\n",
+    ])
 
     # Check task status and inject structured tag
-    task_status = _get_task_status(trellis_dir, hook_input)
-    output.write(f"<task-status>\n{task_status}\n</task-status>\n\n")
+    task_status = f"<task-status>\n{_get_task_status(trellis_dir, hook_input)}\n</task-status>\n\n"
+    blocks.append([task_status, task_status])
 
-    output.write("""<ready>
+    ready_index = len(blocks)
+    blocks.append(["""<ready>
 Context loaded. Follow <task-status>. Load workflow/spec/task details only when needed.
-</ready>""")
+</ready>""", ""])
 
-    context_text = output.getvalue()
+    if platform == "claude":
+        context_text = _fit_hook_context_budget(
+            blocks,
+            # Contract-preserving short forms first; the phase summary last.
+            [ready_index, 0, 1, guidelines_index, state_index, workflow_index],
+            render_shared,
+            shared_index,
+        )
+    else:
+        context_text = "".join(block[0] for block in blocks)
 
     # Kiro (CLI trellis agent agentSpawn) adds a hook's stdout directly to the
     # conversation context — no JSON envelope. Emit the bare overview text.
@@ -963,6 +1104,9 @@ Context loaded. Follow <task-status>. Load workflow/spec/task details only when 
         return
 
     platform = _detect_platform(hook_input)
+    if platform == "antigravity":
+        print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": context_text}}]}, ensure_ascii=False), flush=True)
+        return
     result: dict[str, object] = {
         # Claude Code / Qoder / CodeBuddy / Droid / Gemini / Copilot / Trae /
         # ZCode format.

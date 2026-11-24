@@ -63,7 +63,7 @@ Codex, Gemini CLI, Pi and Kimi share the `.agents/skills/` root (the upstream Ag
 
 One description, two consumers:
 
-1. `trellis init` → `configurePlatform(platformId, cwd)` → `writeTemplateMap(cwd, collect<Platform>Templates())`. For 18 of the 21 platforms the registry entry in `configurators/index.ts` is literally `fromTemplates(collect<Platform>Templates)`, which *is* that composition. Claude Code, Codex and ZCode spell out a `configure` of their own, each for work a `Map<path, content>` cannot express (an opt-in `--with-statusline` flag, an intentionally empty `.codex/skills/` directory, a one-shot console notice) — none of them restates the file list.
+1. `trellis init` → `configurePlatform(platformId, cwd)` → `writeTemplateMap(cwd, collect<Platform>Templates())`. Most registry entries use `fromTemplates`; platform-specific configurators preserve their documented residual behavior. Antigravity also merges its named hook group with existing project hook groups.
 2. `trellis update` → `collectPlatformTemplates(platformId)` (in `configurators/index.ts`) → the same map, used to detect drift and to populate `.trellis/.template-hashes.json`.
 
 Because both consumers read the one description, init and update cannot disagree about which files a bundled skill produces.
@@ -82,7 +82,7 @@ The mechanism that auto-dispatches bundled skills to platform skill roots lives 
    - `collectSkillTemplates(skillsRoot, workflowSkills, bundledSkills)` returns workflow skills and bundled skill files together as a `Map<filePath, content>` rooted at `skillsRoot`.
    - `writeTemplateMap(cwd, files)` is the single writer that puts a collected map on disk.
 
-Every platform that supports skills reaches those two helpers from its own `collect<Platform>Templates()` — either directly (`claude.ts`, `codex.ts`, `copilot.ts`, `gemini.ts`, `grok.ts`, `kimi.ts`, `kiro.ts`, `omp.ts`, `opencode.ts`, `pi.ts`, `reasonix.ts`, `snow.ts`, `zcode.ts`) or through `collectBothTemplates(ctx, cmdPath, skillRoot)` in `shared.ts`, which makes the same two calls on behalf of platforms that have both a commands directory and a skills root (`antigravity.ts`, `codebuddy.ts`, `cursor.ts`, `devin.ts`, `droid.ts`, `kilo.ts`, `qoder.ts`, `trae.ts`).
+Every platform that supports skills reaches those helpers from its own `collect<Platform>Templates()`, either directly or through `collectBothTemplates(ctx, cmdPath, skillRoot)`.
 
 ## Adding a New Bundled Skill
 

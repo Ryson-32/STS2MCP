@@ -43,6 +43,26 @@ MAX_AUTO_INJECT_PATH_BYTES = 512
 AUTO_INJECT_MARKER = "[全文已随本次上下文注入，同版本一般无需重读]"
 REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
+# Claude Code keeps one hook context value inline only up to 10,000
+# characters (JavaScript string length); a longer value is saved to a file and
+# the model sees a 2,000-character preview. Hooks design for the target and
+# never exceed the guarded ceiling.
+CLAUDE_HOOK_CONTEXT_CHARS = 10_000
+HOOK_CONTEXT_TARGET_CHARS = 9_000
+HOOK_CONTEXT_GUARD_CHARS = 9_800
+# Per-turn hooks send the full block only until the host transcript proves it
+# reached the model after the latest compaction. The proof marker closes the
+# full block, so a truncated preview never counts as delivery.
+DELIVERY_FORMAT = "shared-spec-delivery-1"
+DELIVERY_PLATFORMS = ("claude", "codex")
+DELIVERY_MARKER_RE = re.compile(r'<shared-spec-delivered key="([0-9a-f]{32})"/>')
+DELIVERED_REMINDER = "全文（索引与选定规范正文）已在本会话注入，本 SHA 下继续有效。"
+# Measured seina-3d gaps between user turns: Claude median 0.24 MB, p90
+# 1.5 MB; Codex median 0.7 MB. A miss only costs one full re-injection, which
+# then restarts the distance.
+TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024
+TRANSCRIPT_SCAN_CHUNK_BYTES = 256 * 1024
+
 
 @dataclass(frozen=True)
 class SharedSpecConfig:
@@ -1150,15 +1170,178 @@ def _auto_inject_recovery(logical: str, *, restore_cache: bool) -> str:
     return f"Run `{resolve}` and read the returned file."
 
 
+def context_chars(text: str) -> int:
+    """Length as hosts written in JavaScript count it (UTF-16 code units)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _index_relative(path: str, index_root: Path | None) -> str:
+    """Show one owner path relative to the published index folder."""
+    if index_root is None:
+        return path
+    try:
+        return Path(path).relative_to(index_root).as_posix()
+    except ValueError:
+        return path
+
+
+def shared_spec_delivery_key(repo_root: Path, context: SharedSpecContext) -> str | None:
+    """Identify the exact full block a per-turn hook may later abbreviate."""
+    if not context.configured or not context.available or not context.sha or not context.index_path:
+        return None
+    material = json.dumps(
+        [
+            DELIVERY_FORMAT,
+            str(Path(repo_root).resolve()),
+            context.sha,
+            context.index_path,
+            [entry.get("path") for entry in context.auto_inject or []],
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
+def render_shared_spec_reminder(context: SharedSpecContext) -> str:
+    """Short per-turn form used only after delivery of the same key is proven."""
+    return (
+        f'<shared-spec-context status="{context.status}" sha="{context.sha}" delivered="session">\n'
+        f"{DELIVERED_REMINDER}Published index: {context.index_path}\n"
+        "</shared-spec-context>"
+    )
+
+
+def _reverse_transcript_lines(path: Path, limit: int):
+    """Yield complete JSONL lines from the live end, reading at most ``limit`` bytes."""
+    with path.open("rb") as stream:
+        end = stream.seek(0, os.SEEK_END)
+        lower_bound = max(0, end - limit)
+        partial = b""
+        while end > lower_bound:
+            start = max(lower_bound, end - TRANSCRIPT_SCAN_CHUNK_BYTES)
+            stream.seek(start)
+            lines = (stream.read(end - start) + partial).split(b"\n")
+            # A line cut by the chunk start stays pending; one cut by the scan
+            # limit is never parsed.
+            partial = lines.pop(0) if start else b""
+            yield from reversed(lines)
+            end = start
+
+
+def _json_record(line: bytes) -> dict[str, Any] | None:
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def _delivery_keys(texts: list[Any]) -> set[str]:
+    return {
+        key
+        for text in texts
+        if isinstance(text, str)
+        for key in DELIVERY_MARKER_RE.findall(text)
+    }
+
+
+def _transcript_event(line: bytes, platform: str) -> tuple[str, set[str]] | None:
+    """Classify one transcript line as a compaction boundary or delivered block.
+
+    Only text the host recorded as delivered model context counts. Claude also
+    records raw hook stdout (``hook_success``), which still holds the full text
+    when the delivered context was replaced by a file preview.
+    """
+    if platform == "claude":
+        if b'"compact_boundary"' in line:
+            record = _json_record(line)
+            if record and record.get("type") == "system" and record.get("subtype") == "compact_boundary":
+                return "boundary", set()
+        if b"shared-spec-delivered" in line and b"hook_additional_context" in line:
+            record = _json_record(line)
+            attachment = record.get("attachment") if record else None
+            if (
+                record
+                and record.get("type") == "attachment"
+                and isinstance(attachment, dict)
+                and attachment.get("type") == "hook_additional_context"
+            ):
+                content = attachment.get("content")
+                texts = content if isinstance(content, list) else [content]
+                keys = _delivery_keys(texts)
+                if keys:
+                    return "delivered", keys
+        return None
+    if platform == "codex":
+        if b'"compacted"' in line:
+            record = _json_record(line)
+            if record and record.get("type") == "compacted":
+                return "boundary", set()
+        if b"shared-spec-delivered" in line:
+            record = _json_record(line)
+            payload = record.get("payload") if record else None
+            if (
+                record
+                and record.get("type") == "response_item"
+                and isinstance(payload, dict)
+                and payload.get("type") == "message"
+                and payload.get("role") == "developer"
+                and isinstance(payload.get("content"), list)
+            ):
+                keys = _delivery_keys([
+                    item.get("text") for item in payload["content"] if isinstance(item, dict)
+                ])
+                if keys:
+                    return "delivered", keys
+    return None
+
+
+def shared_spec_delivered(
+    transcript_path: Any,
+    key: str | None,
+    platform: str | None,
+    *,
+    scan_bytes: int = TRANSCRIPT_SCAN_BYTES,
+) -> bool:
+    """Return True only when the transcript proves ``key`` was delivered whole.
+
+    The newest delivered full block decides. A compaction boundary, a missing
+    or unreadable transcript, or the scan limit all fail closed.
+    """
+    if (
+        platform not in DELIVERY_PLATFORMS
+        or not key
+        or not isinstance(transcript_path, str)
+        or not transcript_path.strip()
+    ):
+        return False
+    try:
+        for line in _reverse_transcript_lines(Path(transcript_path), scan_bytes):
+            event = _transcript_event(line, platform)
+            if event is None:
+                continue
+            kind, keys = event
+            return kind == "delivered" and key in keys
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def render_shared_spec_context(
     context: SharedSpecContext,
     *,
     max_bytes: int = DEFAULT_AUTO_INJECT_CONTEXT_BYTES,
+    max_chars: int = 0,
+    delivery_key: str | None = None,
 ) -> str:
     """Render one truthful shared-spec block, including only whole selected bodies.
 
     ``max_bytes`` limits the complete UTF-8 block. Zero disables that renderer
     budget for explicit CLI recovery; hook callers use the safe default.
+    ``max_chars`` adds a host character budget (zero disables it).
+    ``delivery_key`` closes the block with a delivery marker, emitted only when
+    every selected body is included whole.
     """
     if not context.configured:
         return ""
@@ -1169,6 +1352,20 @@ def render_shared_spec_context(
             "Do not perform writes that depend on shared Trellis rules until `.trellis/scripts/shared_spec_cache.py ensure` succeeds.\n"
             "</shared-spec-context>"
         )
+    index_root = Path(context.index_path).parent if context.index_path else None
+    budget_label = f"{max_chars}-character" if max_chars > 0 else f"{max_bytes}-byte"
+
+    def fits(text: str) -> bool:
+        return (max_bytes <= 0 or len(text.encode("utf-8")) <= max_bytes) and (
+            max_chars <= 0 or context_chars(text) <= max_chars
+        )
+
+    def budget_failure(entry: dict[str, str]) -> str:
+        return (
+            f"- {entry['path']}: full body was not injected because the {budget_label} context budget was exhausted. "
+            + _auto_inject_recovery(entry["logical"], restore_cache=False)
+        )
+
     readable: list[tuple[dict[str, str], str]] = []
     read_failures: dict[str, str] = {}
     for entry in context.auto_inject or []:
@@ -1187,13 +1384,10 @@ def render_shared_spec_context(
         readable.append((entry, body))
 
     included: list[tuple[dict[str, str], str]] = []
+    budgeted = max_bytes > 0 or max_chars > 0
     budget_failures: dict[str, str] = {
-        entry["path"]: (
-            f"- {entry['path']}: full body was not injected because the {max_bytes}-byte context budget was exhausted. "
-            + _auto_inject_recovery(entry["logical"], restore_cache=False)
-        )
-        for entry, _ in readable
-    } if max_bytes > 0 else {}
+        entry["path"]: budget_failure(entry) for entry, _ in readable
+    } if budgeted else {}
 
     def build_output(*, include_routes: bool) -> str:
         included_paths = {
@@ -1201,8 +1395,8 @@ def render_shared_spec_context(
         }
         lines = [
             f'<shared-spec-context status="{context.status}" sha="{context.sha}">',
-            f"Central shared Trellis rules were loaded from the configured ref or verified cache. Published index: {context.index_path}",
-            "Select every directly matching owner from this published when-to-read index, then read its full body on demand:",
+            f"Published index: {context.index_path}",
+            "Read every directly matching owner in full on demand (paths relative to the index folder):",
         ]
         if include_routes:
             route_rows = context.routes or []
@@ -1212,7 +1406,8 @@ def render_shared_spec_context(
                     if os.path.normcase(route["path"]) in included_paths
                     else ""
                 )
-                lines.append(f"- {route['when']} -> {route['owner']}: {route['path']}{marker}")
+                path = _index_relative(route["path"], index_root)
+                lines.append(f"- {route['when']} -> {route['owner']}: {path}{marker}")
             if not route_rows:
                 for logical, absolute in (context.owners or {}).items():
                     marker = (
@@ -1220,7 +1415,7 @@ def render_shared_spec_context(
                         if os.path.normcase(absolute) in included_paths
                         else ""
                     )
-                    lines.append(f"- {logical} -> {absolute}{marker}")
+                    lines.append(f"- {logical} -> {_index_relative(absolute, index_root)}{marker}")
         else:
             lines.append("- Routing rows were omitted to keep this hook context within budget; read the published index above.")
         if context.warning:
@@ -1245,17 +1440,21 @@ def render_shared_spec_context(
         failures = [failure for failure in failures if failure]
         if failures:
             lines.extend(["", "Auto-inject recovery:", *failures])
+        elif delivery_key:
+            # Last line on purpose: a host preview that keeps only the start
+            # of this block cannot contain the proof of delivery.
+            lines.append(f'<shared-spec-delivered key="{delivery_key}"/>')
         lines.append("</shared-spec-context>")
         return "\n".join(lines)
 
-    if max_bytes <= 0:
+    if not budgeted:
         included.extend(readable)
         budget_failures.clear()
         return build_output(include_routes=True)
 
     include_routes = True
     output = build_output(include_routes=include_routes)
-    if len(output.encode("utf-8")) > max_bytes:
+    if not fits(output):
         include_routes = False
         output = build_output(include_routes=include_routes)
 
@@ -1263,17 +1462,14 @@ def render_shared_spec_context(
         included.append((entry, body))
         del budget_failures[entry["path"]]
         candidate = build_output(include_routes=include_routes)
-        if len(candidate.encode("utf-8")) <= max_bytes:
+        if fits(candidate):
             output = candidate
             continue
         included.pop()
-        budget_failures[entry["path"]] = (
-            f"- {entry['path']}: full body was not injected because the {max_bytes}-byte context budget was exhausted. "
-            + _auto_inject_recovery(entry["logical"], restore_cache=False)
-        )
+        budget_failures[entry["path"]] = budget_failure(entry)
 
     output = build_output(include_routes=include_routes)
-    if len(output.encode("utf-8")) > max_bytes:
+    if not fits(output):
         # Validated auto-inject path/count bounds keep the compact recovery form
         # below the normal limit. This last guard protects synthetic callers.
         return (

@@ -96,19 +96,22 @@ def _shared_spec_context(project_dir: Path, hook_input: dict) -> str:
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     try:
-        from common.shared_spec_cache import (  # type: ignore[import-not-found]
-            ensure_shared_spec_context,
-            render_shared_spec_context,
-        )
+        from common import shared_spec_cache as cache  # type: ignore[import-not-found]
 
         from common.active_task import resolve_context_key
 
-        context = ensure_shared_spec_context(
+        context = cache.ensure_shared_spec_context(
             project_dir,
             session_key=resolve_context_key(hook_input, platform="codex"),
             refresh=hook_input.get("source") in {"compact", "clear"},
         )
-        return render_shared_spec_context(context)
+        if not hasattr(cache, "shared_spec_delivery_key"):
+            return cache.render_shared_spec_context(context)
+        # The closing delivery marker lets later UserPromptSubmit turns send
+        # a short reminder once the rollout shows this block was delivered.
+        return cache.render_shared_spec_context(
+            context, delivery_key=cache.shared_spec_delivery_key(project_dir, context),
+        )
     except Exception:
         if not _shared_specs_declared(project_dir):
             return ""

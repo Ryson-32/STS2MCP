@@ -273,7 +273,7 @@ def _report_write_failure(path: Path) -> None:
 # Keep in sync with src/types/ai-tools.ts AI_TOOLS entries — these are the
 # platforms listed in workflow.md's "agent-capable" Skill Routing block.
 # Codex is checked separately because explicit inline mode does not consume
-# JSONL. Kilo / Antigravity / Devin are NOT in this list either: they load
+# JSONL. Kilo / Devin are NOT in this list either: they load
 # specs through skills instead of JSONL.
 _SUBAGENT_CONFIG_DIRS: tuple[str, ...] = (
     ".claude",
@@ -291,6 +291,7 @@ _SUBAGENT_CONFIG_DIRS: tuple[str, ...] = (
     ".zcode",     # ZCode
     ".grok",      # Grok Build
     ".kimi-code", # Kimi Code
+    ".agents/agents/trellis-implement", # Antigravity (not the shared skills root)
 )
 _CODEX_CONFIG_DIR = ".codex"
 

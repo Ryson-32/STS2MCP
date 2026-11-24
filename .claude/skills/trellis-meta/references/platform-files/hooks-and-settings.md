@@ -22,6 +22,7 @@ Common files:
 | OpenCode | `.opencode/package.json`, `.opencode/plugins/*` |
 | Kiro | `.kiro/hooks/` + platform config |
 | Gemini CLI | `.gemini/settings.json` |
+| Antigravity | `.agents/hooks.json` + `.agents/hooks/` |
 | Qoder | `.qoder/settings.json` |
 | CodeBuddy | `.codebuddy/settings.json` |
 | GitHub Copilot | `.github/copilot/hooks.json` |

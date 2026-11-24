@@ -36,6 +36,7 @@ misreporting the session as having no active task.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -74,6 +75,8 @@ from typing import Optional
 CODEX_NO_TASK_BOOTSTRAP_NOTICE = """<trellis-bootstrap>
 If you have not already loaded Trellis context this session, read the `trellis-start` skill once.
 </trellis-bootstrap>"""
+# Same notice for turns that only carry the short shared-spec reminder.
+CODEX_NO_TASK_BOOTSTRAP_SHORT = "<trellis-bootstrap>Read `trellis-start` once if not loaded this session.</trellis-bootstrap>"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +106,8 @@ def find_trellis_root(start: Path) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 def _detect_platform(input_data: dict) -> str | None:
+    if ".agents" in Path(sys.argv[0]).parts:
+        return "antigravity"
     if isinstance(input_data.get("cursor_version"), str):
         return "cursor"
     # CLAUDE_PROJECT_DIR is a compatibility alias that several hosts set
@@ -310,7 +315,7 @@ def _resolve_codex_dispatch_mode(config: dict) -> str:
     return mode
 
 
-def _codex_mode_banner(config: dict) -> str:
+def _codex_mode_banner(config: dict, *, short: bool = False) -> str:
     """Emit a `<codex-mode>` banner for the additionalContext payload.
 
     Reads `codex.dispatch_mode` from .trellis/config.yaml; defaults to
@@ -323,10 +328,17 @@ def _codex_mode_banner(config: dict) -> str:
     fall back to `inline` without per-turn warnings. The banner makes the
     active mode explicit to Codex AI per turn, complementing the workflow-state
     body which is per-status. Mode tells AI which dispatch protocol to follow;
-    workflow-state tells AI what step it's at.
+    workflow-state tells AI what step it's at. ``short`` keeps the same mode
+    in one line for turns that carry the short shared-spec reminder.
     """
     mode = _resolve_codex_dispatch_mode(config)
-    if mode == "auto":
+    if short:
+        meaning = (
+            "auto: implement/check default to Trellis sub-agents; the main session coordinates and finishes."
+            if mode == "auto"
+            else "inline: the main session implements/checks directly; no implement/check sub-agents."
+        )
+    elif mode == "auto":
         meaning = (
             "auto: implement/check work defaults to Trellis sub-agents; native Codex "
             "context injection is preferred and child-side loading is the fallback. "
@@ -421,24 +433,49 @@ def _load_hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _shared_spec_context(root: Path, data: dict) -> str:
-    """Prepare the latest available central shared-spec context."""
+def _shared_spec_context(
+    root: Path,
+    data: dict,
+    *,
+    refresh: bool = False,
+    delivery_platform: str | None = None,
+    reserve_chars: int = 0,
+) -> str:
+    """Prepare the latest available central shared-spec context.
+
+    With ``delivery_platform`` (Claude Code or Codex), the full block is sent
+    until the host transcript proves that the same block reached the model
+    after the latest compaction; later turns then get a short reminder.
+    ``reserve_chars`` is the rest of this hook value, kept inside Claude
+    Code's inline limit when the full block is sent.
+    """
     scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     try:
-        from common.shared_spec_cache import (  # type: ignore[import-not-found]
-            ensure_shared_spec_context,
-            render_shared_spec_context,
-        )
+        from common import shared_spec_cache as cache  # type: ignore[import-not-found]
 
         from common.active_task import resolve_context_key
 
-        context = ensure_shared_spec_context(
-            root, session_key=resolve_context_key(data, platform=_detect_platform(data)),
+        context = cache.ensure_shared_spec_context(
+            root,
+            session_key=resolve_context_key(data, platform=_detect_platform(data)),
+            refresh=refresh,
         )
-
-        return render_shared_spec_context(context)
+        if delivery_platform not in getattr(cache, "DELIVERY_PLATFORMS", ()):
+            return cache.render_shared_spec_context(context)
+        key = cache.shared_spec_delivery_key(root, context)
+        if (
+            key
+            and context.status == "ready"
+            and cache.shared_spec_delivered(data.get("transcript_path"), key, delivery_platform)
+        ):
+            return cache.render_shared_spec_reminder(context)
+        max_chars = (
+            max(cache.HOOK_CONTEXT_GUARD_CHARS - reserve_chars, 1)
+            if delivery_platform == "claude" else 0
+        )
+        return cache.render_shared_spec_context(context, max_chars=max_chars, delivery_key=key)
     except Exception:
         return (
             '<shared-spec-context status="blocked">\n'
@@ -448,6 +485,53 @@ def _shared_spec_context(root: Path, data: dict) -> str:
         ) if (_read_trellis_config(root).get("shared_specs") is not None) else ""
 
 
+def _context_chars(text: str) -> int:
+    """Length as Claude Code counts it (JavaScript UTF-16 code units)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _agy_workflow_state(data: dict, marker: str) -> tuple[bool, bool]:
+    """Return whether context is present and whether a checkpoint needs refresh."""
+    transcript = data.get("transcriptPath")
+    if not isinstance(transcript, str) or not transcript:
+        return False, False
+
+    # Scan backwards from the live end so large prior turns cost no reads.
+    # The persistent message stays visible on later tool steps; AGY's
+    # ephemeral messages are only for the next invocation.
+    try:
+        with Path(transcript).open("rb") as stream:
+            end = stream.seek(0, os.SEEK_END)
+            lower_bound = max(0, end - 1024 * 1024)
+            partial = b""
+            while end > lower_bound:
+                start = max(lower_bound, end - 16 * 1024)
+                stream.seek(start)
+                lines = (stream.read(end - start) + partial).split(b"\n")
+                partial = lines.pop(0) if start else b""
+                for line in reversed(lines):
+                    if not line.strip():
+                        continue
+                    step = json.loads(line)
+                    if step.get("type") == "CHECKPOINT":
+                        return False, True
+                    if step.get("type") == "SYSTEM_MESSAGE" and step.get("source") == "SYSTEM_SDK":
+                        content = step.get("content")
+                        if isinstance(content, str):
+                            match = re.search(
+                                r'^<trellis-agy-workflow key="[0-9a-f]{64}">$',
+                                content[:1024],
+                                re.MULTILINE,
+                            )
+                            if match:
+                                return match.group() == marker, False
+                end = start
+    except (OSError, ValueError, AttributeError):
+        # An unavailable or incomplete transcript cannot prove delivery.
+        return False, False
+    return False, False
+
+
 def main() -> int:
     if os.environ.get("TRELLIS_HOOKS") == "0" or os.environ.get("TRELLIS_DISABLE_HOOKS") == "1":
         return 0
@@ -455,6 +539,14 @@ def main() -> int:
     data = _load_hook_input()
 
     cwd_str = data.get("cwd") or os.getcwd()
+    platform = _detect_platform(data)
+    if platform == "antigravity":
+        workspaces = data.get("workspacePaths")
+        if isinstance(workspaces, list):
+            cwd_str = next(
+                (p for p in workspaces if isinstance(p, str) and find_trellis_root(Path(p)) is not None),
+                cwd_str,
+            )
     cwd = Path(cwd_str)
 
     root = find_trellis_root(cwd)
@@ -466,7 +558,6 @@ def main() -> int:
         return 0  # user opted out of the per-turn breadcrumb for this turn
 
     templates = load_breadcrumbs(root)
-    platform = _detect_platform(data)
     task = get_active_task(root, data)
     if task is None:
         # No active task — still emit a breadcrumb nudging AI toward
@@ -482,15 +573,48 @@ def main() -> int:
         breadcrumb = build_breadcrumb(
             task_id, status, templates, source_for_breadcrumb, breadcrumb_key=status_key
         )
+
+    if platform == "antigravity":
+        identity = json.dumps([str(root.resolve()), config.get("shared_specs"), breadcrumb], sort_keys=True)
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        marker = f'<trellis-agy-workflow key="{key}">'
+        already_injected, refresh = _agy_workflow_state(data, marker)
+        if already_injected:
+            print("{}")
+            return 0
+        shared_context = _shared_spec_context(root, data, refresh=refresh)
+        if shared_context.startswith('<shared-spec-context status="blocked">'):
+            message = (
+                "Use the current shared-spec status in place of earlier Trellis context.\n"
+                f"{shared_context}\n\n{breadcrumb}"
+            )
+            print(json.dumps({"injectSteps": [{"ephemeralMessage": message}]}, ensure_ascii=False))
+            return 0
+        message = "\n".join(filter(None, (
+            marker,
+            "Use this workflow state and shared-spec status in place of earlier Trellis context.",
+            shared_context,
+            breadcrumb,
+            "</trellis-agy-workflow>",
+        )))
+        print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": message}}]}, ensure_ascii=False))
+        return 0
+
+    delivery_platform = platform if platform in ("claude", "codex") else None
+    shared_context = _shared_spec_context(
+        root,
+        data,
+        delivery_platform=delivery_platform,
+        reserve_chars=_context_chars(breadcrumb) + 2,
+    )
     if platform == "codex":
+        short = 'delivered="session"' in shared_context.split("\n", 1)[0]
         parts: list[str] = []
         if task is None:
-            parts.append(CODEX_NO_TASK_BOOTSTRAP_NOTICE)
-        parts.append(_codex_mode_banner(config))
+            parts.append(CODEX_NO_TASK_BOOTSTRAP_SHORT if short else CODEX_NO_TASK_BOOTSTRAP_NOTICE)
+        parts.append(_codex_mode_banner(config, short=short))
         parts.append(breadcrumb)
         breadcrumb = "\n\n".join(parts)
-
-    shared_context = _shared_spec_context(root, data)
     if shared_context:
         breadcrumb = f"{shared_context}\n\n{breadcrumb}"
 

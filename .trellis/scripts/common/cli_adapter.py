@@ -168,6 +168,8 @@ class CLIAdapter:
             Path to agent definition file (.md for most platforms, .toml for Codex)
         """
         mapped_name = self.get_agent_name(agent)
+        if self.platform == "antigravity":
+            return project_root / ".agents" / "agents" / mapped_name / "agent.md"
         if self.platform == "codex":
             return self.get_config_dir(project_root) / "agents" / f"{mapped_name}.toml"
         return self.get_config_dir(project_root) / "agents" / f"{mapped_name}.md"
@@ -418,9 +420,10 @@ class CLIAdapter:
             cmd = ["gemini"]
             cmd.append(prompt)
         elif self.platform == "antigravity":
-            raise ValueError(
-                "Antigravity workflows are UI slash commands; CLI agent run is not supported."
-            )
+            cmd = ["agy", "--agent", mapped_agent]
+            if json_output:
+                cmd.extend(["--output-format", "stream-json"])
+            cmd.extend(["-p", prompt])
         elif self.platform == "devin":
             raise ValueError(
                 "Devin workflows are UI slash commands; CLI agent run is not supported."
@@ -499,9 +502,7 @@ class CLIAdapter:
         elif self.platform == "gemini":
             return ["gemini", "--resume", session_id]
         elif self.platform == "antigravity":
-            raise ValueError(
-                "Antigravity workflows are UI slash commands; CLI resume is not supported."
-            )
+            return ["agy", "--conversation", session_id]
         elif self.platform == "devin":
             raise ValueError(
                 "Devin workflows are UI slash commands; CLI resume is not supported."
@@ -631,6 +632,7 @@ class CLIAdapter:
             "opencode",
             "iflow",
             "codex",
+            "antigravity",
             "pi",
             "grok",
             "kimi",
@@ -643,7 +645,7 @@ class CLIAdapter:
         Claude Code, OpenCode, iFlow: require agent .md files (--agent flag).
         Codex: auto-discovers agents from .codex/agents/*.toml, no --agent flag.
         """
-        return self.platform in ("claude", "opencode", "iflow")
+        return self.platform in ("claude", "opencode", "iflow", "antigravity")
 
     # =========================================================================
     # Session ID Handling
@@ -660,7 +662,7 @@ class CLIAdapter:
         return self.platform == "claude"
 
     def extract_session_id_from_log(self, log_content: str) -> str | None:
-        """Extract session ID from log output (OpenCode only).
+        """Extract session ID from supported CLI log output.
 
         OpenCode generates session IDs in format: ses_xxx
 
@@ -671,6 +673,19 @@ class CLIAdapter:
             Session ID if found, None otherwise
         """
         import re
+
+        if self.platform == "antigravity":
+            import json
+            for line in log_content.splitlines():
+                try:
+                    event = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(event, dict):
+                    conversation_id = event.get("conversation_id")
+                    if isinstance(conversation_id, str) and conversation_id:
+                        return conversation_id
+            return None
 
         # OpenCode session ID pattern
         match = re.search(r"ses_[a-zA-Z0-9]+", log_content)

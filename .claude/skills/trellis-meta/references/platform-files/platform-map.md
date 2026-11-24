@@ -13,7 +13,7 @@ This page lists common Trellis file locations in a user project by platform. Whe
 | Kilo | `--kilo` | `.kilocode/` | `.kilocode/skills/` | Usually none | `.kilocode/workflows/` |
 | Kiro | `--kiro` | `.kiro/` | `.kiro/skills/` | `.kiro/agents/` | `.kiro/hooks/` |
 | Gemini CLI | `--gemini` | `.gemini/` | `.agents/skills/` | `.gemini/agents/` | `.gemini/settings.json` + `.gemini/hooks/` |
-| Antigravity | `--antigravity` | `.agent/` | `.agent/skills/` | Usually none | `.agent/workflows/` |
+| Antigravity | `--antigravity` | `.agent/` + `.agents/` | `.agent/skills/` | `.agents/agents/trellis-*/agent.md` | `.agents/hooks.json` + `.agents/hooks/`; `.agent/workflows/` |
 | Devin | `--devin` | `.devin/` | `.devin/skills/` | Usually none | `.devin/workflows/` |
 | Qoder | `--qoder` | `.qoder/` | `.qoder/skills/` | `.qoder/agents/` | `.qoder/hooks/` + `.qoder/settings.json` |
 | CodeBuddy | `--codebuddy` | `.codebuddy/` | `.codebuddy/skills/` | `.codebuddy/agents/` | `.codebuddy/hooks/` + `.codebuddy/settings.json` |
@@ -40,6 +40,7 @@ These platforms usually have `trellis-research`, `trellis-implement`, and `trell
 - Codex
 - Kiro
 - Gemini CLI
+- Antigravity
 - Qoder
 - CodeBuddy
 - GitHub Copilot
@@ -67,7 +68,6 @@ When changing sub-agent dispatch behavior on these platforms, edit the extension
 These platforms rely more on workflows/skills to guide the main session:
 
 - Kilo
-- Antigravity
 - Devin
 
 When changing behavior, inspect workflows and skills first. Do not assume Trellis sub-agents exist.

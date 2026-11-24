@@ -1,6 +1,6 @@
 # Local Multi-Agent Channel Runtime
 
-`trellis channel` is the local multi-agent collaboration runtime shipped with the Trellis CLI. It lets the main AI session spawn peer workers (Claude Code, Codex, or any agent definition under `.trellis/agents/`), exchange durable messages through an event log, and coordinate review or brainstorm loops without hand-stitching shell pipelines.
+`trellis channel` is the local multi-agent collaboration runtime shipped with the Trellis CLI. It lets the main AI session spawn peer workers (Claude Code, Codex, AGY, or any agent definition under `.trellis/agents/`), exchange durable messages through an event log, and coordinate review or brainstorm loops without hand-stitching shell pipelines.
 
 This reference covers how channels are wired into the user project so an AI customizing the project knows what to edit. For runtime usage (commands, forum/thread patterns, worker spawn flags), defer to the bundled `trellis-channel` capability skill.
 
@@ -61,7 +61,7 @@ Precedence for the worker guard is: CLI flag > environment variable > `.trellis/
 - **Workflow layer**: workflows that use channel dispatch (such as `channel-driven-subagent-dispatch`) instruct the main agent to call `trellis channel spawn --agent check` or `--agent implement` instead of a platform sub-agent. If `.trellis/agents/check.md` or `implement.md` is missing, `trellis workflow --template <id>` prints a non-blocking warning at install time. Restore them with `trellis update` if they are deleted by accident.
 - **Task layer**: channel workers do not own task state. The supervising main session passes the active task path through the worker inbox; the worker resolves task artifacts from disk.
 - **Spec layer**: workers read `.trellis/spec/` the same way the main session does. Channel runtime does not bypass spec context loading.
-- **Platform integration layer**: channel runtime is platform-neutral. It does not depend on `.claude/`, `.codex/`, or any other platform directory. The adapters that normalize provider output (Claude `stream-json`, Codex `app-server`) live inside the Trellis CLI binary, not in the project.
+- **Platform integration layer**: channel runtime is platform-neutral. It does not depend on `.claude/`, `.codex/`, or any other platform directory. The adapters that normalize provider output (Claude and AGY `stream-json`, Codex `app-server`) live inside the Trellis CLI binary, not in the project.
 - **Platform sub-agent files vs. channel workers**: editing `.claude/agents/trellis-implement.md` (and its peers in other platform `.X/agents/` directories) does NOT change channel-runtime worker behavior — channel workers load `.trellis/agents/<name>.md`. The platform-specific agent files are for direct sub-agent dispatch from the main AI session, not for channel-spawned workers. See `platform-files/agents.md` for the per-platform agent surface, and the `trellis-meta/SKILL.md` rule that codifies this split.
 
 ## Runtime Usage

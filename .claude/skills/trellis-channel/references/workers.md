@@ -1,8 +1,8 @@
 # Workers And Agent Cards
 
 Use workers when a peer agent should execute independently and report back
-through the channel event log. A worker is a registered child process (claude
-or codex) attached to a channel; the supervisor forwards inbox messages to it
+through the channel event log. A worker is a registered provider process
+attached to a channel; the supervisor forwards inbox messages to it
 and translates its output back into channel events.
 
 ## Spawn
@@ -27,12 +27,12 @@ inbox-idle until a `send --to <worker>` (or a broadcast when
 Key `spawn` flags:
 
 - `--agent <name>` — load `.trellis/agents/<name>.md` (provider/model/as/system prompt defaults).
-- `--provider <claude|codex>` — overrides the agent card; validated against the adapter registry.
+- `--provider <claude|codex|agy|opencode>` — overrides the agent card; validated against the adapter registry.
 - `--as <name>` — channel worker handle; defaults to the agent name.
 - `--cwd <path>` — worker working directory (also the jail root for `--file`/`--jsonl`).
 - `--model <id>` — provider model ID override.
 - `--effort <low|medium|high|xhigh|max>` — reasoning level, independent from model ID.
-- `--resume <id>` — resume an existing claude session / codex thread.
+- `--resume <id>` — resume the named provider session or conversation where supported.
 - `--ownership <key>` — optional logical work metadata; it does not lock or exclude peers.
 - `--timeout <duration|disabled>` — warning-only supervision threshold; omitted or `disabled` means no fixed threshold and never auto-kills.
 - `--warn-before <duration>` — `supervisor_warning` lead time (default `5m`; `0ms` warns at the threshold).
@@ -47,7 +47,16 @@ Key `spawn` flags:
 event records `pid`, `provider`, `agent`, the injected `files`, resolved
 `manifests`, and any explicit model/effort/ownership/resume metadata. Claude's
 system prompt is transported through an owner-only sidecar file so long Windows
-prompts do not enter argv.
+prompts do not enter argv. AGY receives the instructions and context with the
+first message on stdin; they are not an AGY system prompt. Each AGY worker
+launch gets its own task context identity.
+
+OpenCode uses an installed `opencode` CLI and its configured model providers.
+Use `--model <provider/model>` and an optional model-supported `--effort`
+variant. The worker owns a local server and a native session. The persisted
+`session-id` is the value for `--resume` after stopping the previous worker.
+OpenCode's configured tool permissions apply, with interactive requests
+rejected in Channel. Use an isolated worktree for authorized write work.
 
 Model and effort in the command or `spawned` event are **requested** values.
 Report them as provider-observed/applied only when provider output independently
@@ -71,7 +80,7 @@ provider: claude
 ```
 
 Frontmatter fields populate `spawn` defaults (provider, model, `as`); the
-markdown body becomes the worker's system-prompt role. Cards do **not**
+markdown body supplies the worker's role instructions. Cards do **not**
 auto-attach task files — context must be injected explicitly per spawn (see
 below).
 
@@ -84,7 +93,7 @@ sed -n '1,100p' .trellis/agents/check.md
 
 ## Context Injection
 
-Two flags inject content into the worker's system prompt under a
+Two flags inject content into the worker's instructions under a
 `# CONTEXT FILES` block, assembled by `context-loader`:
 
 - `--file <path>` — repeatable, glob-supported (`*`, `**`). Each match is
@@ -140,11 +149,12 @@ matching event; timeout exits with code **124** and prints
 
 ## Soft Interrupt — `interrupt`
 
-`channel interrupt` is the cooperative redirect: it appends an `interrupt`
-event (reason `"user"`) and, where the adapter supports it, issues a
-provider-level turn interrupt with a replacement instruction. Use it when the
-worker should drop its current turn and act on new input immediately, without
-losing its session.
+`channel interrupt` redirects a worker to a replacement instruction in the
+same session. For an active AGY turn, the supervisor stops the AGY process
+and confirms that its replacement resumed the same conversation before
+forwarding the instruction. It handles the redirect before queued sends and
+keeps those sends for later turns. If the worker is idle, the replacement
+starts a normal new turn.
 
 ```bash
 echo "Stop refactoring the parser — switch to fixing the failing test in src/foo.ts" \
@@ -158,9 +168,10 @@ Flags:
 - `--scope <project|global>` — channel scope.
 - `--stdin` / `--text-file <path>` / `[text]` — replacement instruction body.
 
-The command appends `interrupt_requested`; the supervisor answers with
-`interrupted`. Filters can subscribe to those exact kinds. For a low-priority
-hint that should wait for the next turn, send a plain message:
+The command appends `interrupt_requested`. Check `interrupted` for the
+redirect outcome and `turn_finished` for the replacement turn's outcome.
+The response appears as a `message` event. For a low-priority hint that
+should wait for the next turn, send a plain message:
 
 ```bash
 echo "Check this when you reach the next turn." \

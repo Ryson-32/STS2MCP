@@ -35,11 +35,11 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 <!-- TRELLIS-PROFILE:START -->
 ## 共享 Trellis 规则入口
 
-共享规则在每次加载时从配置的 Registry ref 获取并验证当前版本，不与会话或任务族绑定，也不复制到项目 Git。hook 通常自动执行；当前上下文没有注入共享索引、版本和实际路径时，运行：
+共享规则保存在经验证的本机快照中。普通 Hook 在同一会话首次检查配置的 Registry ref，后续复用最新的已验证本机快照。压缩或上下文恢复时按恢复流程刷新。当前上下文缺少共享索引、版本或实际路径，或需要立即检查远端时，运行：
 
 `python .trellis/scripts/shared_spec_cache.py ensure`
 
-命令与 hook 共用输出：当前场景索引、本次实际读取 SHA 及已配置规范全文。索引只为同次输出完整包含的正文标记“全文已随本次上下文注入，同版本一般无需重读”；其余按当前任务选择直接命中的 owner，每次完整读取一个文件到 EOF，不做传递式全量加载。每次加载都重新检查配置 ref，旧标记不能替代本次输出。网络不可用时可以使用已验证缓存，但会明确提示尚未确认其相对配置 ref 的新鲜度。机器读取可加 `--json`；`context` 含同一输出，`sha` 与 `index_path` 记录本次实际来源。
+命令与 hook 共用输出：当前场景索引、本次实际读取 SHA 及已配置规范全文。索引只为同次输出完整包含的正文标记“全文已随本次上下文注入，同版本一般无需重读”；其余按当前任务选择直接命中的 owner，每次完整读取一个文件到 EOF，不做传递式全量加载。显式 ensure 会重新检查配置 ref，旧标记不能替代恢复时的实际输出。网络不可用时可以使用已验证缓存，但会明确提示尚未确认其相对配置 ref 的新鲜度。机器读取可加 `--json`；`context` 含同一输出，`sha` 与 `index_path` 记录本次实际来源。
 
 旧逻辑引用 `.trellis/spec/shared/<owner>.md` 继续有效。需要实际文件路径时运行 `python .trellis/scripts/shared_spec_cache.py resolve <logical-ref> --json`，使用返回的验证缓存路径；不要猜测缓存目录。
 

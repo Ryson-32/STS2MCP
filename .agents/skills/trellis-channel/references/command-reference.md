@@ -208,8 +208,11 @@ trellis channel interrupt <name> [text]
 ```
 
 Behavior:
-- Appends `interrupt_requested` with `reason: "user"`; the supervisor records
-  `interrupted` after attempting the provider-level redirect.
+- Requires replacement text. Appends `interrupt_requested` with
+  `reason: "user"`; the supervisor records the outcome in `interrupted`.
+- For an active AGY turn, the supervisor stops the old process and waits for
+  the resumed process to confirm the same conversation ID. A stop or resume
+  failure records `interrupted{method:"signal",outcome:"failed"}`.
 - Prints the appended event JSON on stdout.
 
 ---
@@ -222,7 +225,7 @@ Behavior:
 trellis channel spawn <name>
   [--scope project|global]
   [--agent <agent-name>]                  # loads .trellis/agents/<name>.md
-  [--provider claude|codex]               # overrides agent file
+  [--provider claude|codex|agy|opencode]  # overrides agent file
   [--as <worker-name>]                    # default: agent name
   [--cwd <path>]
   [--model <id>]                         # provider model ID
@@ -247,7 +250,7 @@ trellis channel spawn <name>
 Behavior:
 - Provider is validated against the adapter registry
   (`packages/cli/src/commands/channel/adapters/`); current: `claude`,
-  `codex`.
+  `codex`, `agy`.
 - Worker stays inbox-idle until the first `send --to <worker>`.
 - Returns only after a matching durable `spawned` event; startup errors,
   supervisor death, and readiness timeout fail instead of reporting success.
@@ -260,6 +263,8 @@ Behavior:
   signals the worker; omitted or `disabled` records no fixed threshold.
 - The Claude system prompt is passed by an owner-only sidecar file, avoiding
   Windows command-line length limits.
+- AGY receives the instructions and context with the first user message on
+  stdin. A redirect keeps the same logical worker and conversation.
 - Worker-guard precedence: CLI flag → env var
   (`TRELLIS_CHANNEL_WORKER_IDLE_TIMEOUT`,
   `TRELLIS_CHANNEL_MAX_LIVE_WORKERS`) →
@@ -270,7 +275,7 @@ Behavior:
 ```bash
 trellis channel run [name?]
   [--agent <name>]
-  [--provider claude|codex]
+  [--provider claude|codex|agy|opencode]
   [--as <worker-name>]
   [--cwd <path>]
   [--model <id>]
