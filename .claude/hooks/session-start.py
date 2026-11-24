@@ -935,6 +935,26 @@ def _fit_hook_context_budget(
     return "".join(block[0] for block in blocks).rstrip()
 
 
+def _record_session_start_delivery(project_dir: Path, hook_input: dict, context_text: str) -> None:
+    """Let the first prompt's hook trust this block before the transcript exists.
+
+    Claude Code writes the transcript only after the first prompt's hook runs.
+    Only a marked block that stays inside the inline ceiling is recorded.
+    """
+    try:
+        from common import shared_spec_cache as cache  # type: ignore[import-not-found]
+
+        match = cache.DELIVERY_MARKER_RE.search(context_text)
+        inline = cache.context_chars(context_text) <= cache.HOOK_CONTEXT_GUARD_CHARS
+        cache.record_session_start_delivery(
+            project_dir,
+            hook_input.get("session_id"),
+            match.group(1) if match and inline else None,
+        )
+    except Exception:
+        pass  # Older scripts without the record keep sending the first full block.
+
+
 def main():
     if should_skip_injection():
         sys.exit(0)
@@ -1093,6 +1113,7 @@ Context loaded. Follow <task-status>. Load workflow/spec/task details only when 
             render_shared,
             shared_index,
         )
+        _record_session_start_delivery(project_dir, hook_input, context_text)
     else:
         context_text = "".join(block[0] for block in blocks)
 

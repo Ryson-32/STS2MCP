@@ -445,9 +445,10 @@ def _shared_spec_context(
 
     With ``delivery_platform`` (Claude Code or Codex), the full block is sent
     until the host transcript proves that the same block reached the model
-    after the latest compaction; later turns then get a short reminder.
-    ``reserve_chars`` is the rest of this hook value, kept inside Claude
-    Code's inline limit when the full block is sent.
+    after the latest compaction; later turns then get a short reminder. A
+    verified offline snapshot follows the same rule and its reminder keeps the
+    offline warning. ``reserve_chars`` is the rest of this hook value, kept
+    inside Claude Code's inline limit when the full block is sent.
     """
     scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
@@ -462,20 +463,27 @@ def _shared_spec_context(
             session_key=resolve_context_key(data, platform=_detect_platform(data)),
             refresh=refresh,
         )
-        if delivery_platform not in getattr(cache, "DELIVERY_PLATFORMS", ()):
-            return cache.render_shared_spec_context(context)
-        key = cache.shared_spec_delivery_key(root, context)
         if (
-            key
-            and context.status == "ready"
-            and cache.shared_spec_delivered(data.get("transcript_path"), key, delivery_platform)
+            delivery_platform not in getattr(cache, "DELIVERY_PLATFORMS", ())
+            or not hasattr(cache, "render_shared_spec_delivery")
         ):
-            return cache.render_shared_spec_reminder(context)
+            return cache.render_shared_spec_context(context)
         max_chars = (
             max(cache.HOOK_CONTEXT_GUARD_CHARS - reserve_chars, 1)
             if delivery_platform == "claude" else 0
         )
-        return cache.render_shared_spec_context(context, max_chars=max_chars, delivery_key=key)
+        full, key, omitted = cache.render_shared_spec_delivery(
+            context, cache.shared_spec_delivery_key(root, context), max_chars=max_chars,
+        )
+        if key and cache.shared_spec_delivered(
+            data.get("transcript_path"),
+            key,
+            delivery_platform,
+            repo_root=root,
+            session_id=data.get("session_id"),
+        ):
+            return cache.render_shared_spec_reminder(context, omitted)
+        return full
     except Exception:
         return (
             '<shared-spec-context status="blocked">\n'
@@ -490,11 +498,18 @@ def _context_chars(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def _agy_workflow_state(data: dict, marker: str) -> tuple[bool, bool]:
-    """Return whether context is present and whether a checkpoint needs refresh."""
+# The same backward-scan bound as the Claude Code and Codex delivery check
+# (shared_spec_cache.TRANSCRIPT_SCAN_BYTES / TRANSCRIPT_SCAN_CHUNK_BYTES).
+AGY_TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024
+AGY_TRANSCRIPT_SCAN_CHUNK_BYTES = 256 * 1024
+_SHARED_SPEC_OPEN_RE = re.compile(r'<shared-spec-context status="([^"]*)"(?: sha="([^"]*)")?')
+
+
+def _agy_workflow_state(data: dict) -> tuple[str | None, bool]:
+    """Return the newest Trellis marker line and whether a checkpoint came first."""
     transcript = data.get("transcriptPath")
     if not isinstance(transcript, str) or not transcript:
-        return False, False
+        return None, False
 
     # Scan backwards from the live end so large prior turns cost no reads.
     # The persistent message stays visible on later tool steps; AGY's
@@ -502,10 +517,10 @@ def _agy_workflow_state(data: dict, marker: str) -> tuple[bool, bool]:
     try:
         with Path(transcript).open("rb") as stream:
             end = stream.seek(0, os.SEEK_END)
-            lower_bound = max(0, end - 1024 * 1024)
+            lower_bound = max(0, end - AGY_TRANSCRIPT_SCAN_BYTES)
             partial = b""
             while end > lower_bound:
-                start = max(lower_bound, end - 16 * 1024)
+                start = max(lower_bound, end - AGY_TRANSCRIPT_SCAN_CHUNK_BYTES)
                 stream.seek(start)
                 lines = (stream.read(end - start) + partial).split(b"\n")
                 partial = lines.pop(0) if start else b""
@@ -514,7 +529,7 @@ def _agy_workflow_state(data: dict, marker: str) -> tuple[bool, bool]:
                         continue
                     step = json.loads(line)
                     if step.get("type") == "CHECKPOINT":
-                        return False, True
+                        return None, True
                     if step.get("type") == "SYSTEM_MESSAGE" and step.get("source") == "SYSTEM_SDK":
                         content = step.get("content")
                         if isinstance(content, str):
@@ -524,12 +539,12 @@ def _agy_workflow_state(data: dict, marker: str) -> tuple[bool, bool]:
                                 re.MULTILINE,
                             )
                             if match:
-                                return match.group() == marker, False
+                                return match.group(), False
                 end = start
     except (OSError, ValueError, AttributeError):
         # An unavailable or incomplete transcript cannot prove delivery.
-        return False, False
-    return False, False
+        return None, False
+    return None, False
 
 
 def main() -> int:
@@ -575,20 +590,27 @@ def main() -> int:
         )
 
     if platform == "antigravity":
-        identity = json.dumps([str(root.resolve()), config.get("shared_specs"), breadcrumb], sort_keys=True)
-        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        marker = f'<trellis-agy-workflow key="{key}">'
-        already_injected, refresh = _agy_workflow_state(data, marker)
-        if already_injected:
-            print("{}")
-            return 0
+        latest_marker, refresh = _agy_workflow_state(data)
         shared_context = _shared_spec_context(root, data, refresh=refresh)
-        if shared_context.startswith('<shared-spec-context status="blocked">'):
+        shared = _SHARED_SPEC_OPEN_RE.match(shared_context)
+        if shared and shared.group(1) == "blocked":
+            # Blocked context is checked again on the next invocation, so it
+            # leaves no persistent marker. A verified offline snapshot is
+            # stable for the session and is deduplicated like ready context.
             message = (
                 "Use the current shared-spec status in place of earlier Trellis context.\n"
                 f"{shared_context}\n\n{breadcrumb}"
             )
             print(json.dumps({"injectSteps": [{"ephemeralMessage": message}]}, ensure_ascii=False))
+            return 0
+        identity = json.dumps(
+            [str(root.resolve()), config.get("shared_specs"), *(shared.groups() if shared else ()), breadcrumb],
+            sort_keys=True,
+        )
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        marker = f'<trellis-agy-workflow key="{key}">'
+        if latest_marker == marker:
+            print("{}")
             return 0
         message = "\n".join(filter(None, (
             marker,

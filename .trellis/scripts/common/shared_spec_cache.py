@@ -62,6 +62,9 @@ DELIVERED_REMINDER = "全文（索引与选定规范正文）已在本会话注�
 # then restarts the distance.
 TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024
 TRANSCRIPT_SCAN_CHUNK_BYTES = 256 * 1024
+# Claude Code creates the transcript only after the first prompt's hook runs.
+# Its SessionStart hook leaves the delivered key here for that one check.
+SESSION_START_RECORD_DIR = (".trellis", ".runtime", "shared-spec-session-start")
 
 
 @dataclass(frozen=True)
@@ -1087,7 +1090,7 @@ def ensure_shared_spec_context(
     warning = None
     status = "ready"
     if source == "session-cache":
-        warning = "Registry checked earlier in this session. Using the latest verified local snapshot."
+        # A ready session-cache hit needs no warning; `source` still records it.
         if checked and checked.get("source") == "verified-cache":
             status = "offline"
             source = "verified-cache"
@@ -1203,13 +1206,53 @@ def shared_spec_delivery_key(repo_root: Path, context: SharedSpecContext) -> str
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
-def render_shared_spec_reminder(context: SharedSpecContext) -> str:
-    """Short per-turn form used only after delivery of the same key is proven."""
-    return (
-        f'<shared-spec-context status="{context.status}" sha="{context.sha}" delivered="session">\n'
-        f"{DELIVERED_REMINDER}Published index: {context.index_path}\n"
-        "</shared-spec-context>"
-    )
+def _subset_delivery_key(delivery_key: str, included: list[str]) -> str:
+    """Key of a block whose budget left some selected bodies out."""
+    return _hash(json.dumps([delivery_key, included], ensure_ascii=False, separators=(",", ":")))
+
+
+def render_shared_spec_reminder(
+    context: SharedSpecContext, omitted: tuple[str, ...] | list[str] = ()
+) -> str:
+    """Short per-turn form used only after delivery of the same key is proven.
+
+    ``omitted`` names selected files whose bodies that block left out; an
+    offline snapshot keeps its freshness warning.
+    """
+    lines = [
+        f'<shared-spec-context status="{context.status}" sha="{context.sha}" delivered="session">',
+        DELIVERED_REMINDER,
+        f"Published index: {context.index_path}",
+    ]
+    if omitted:
+        lines.append(
+            "Selected bodies not injected (paths relative to the index folder; read on demand): "
+            + ", ".join(omitted)
+        )
+    if context.warning:
+        lines.append(f"Warning: {context.warning}")
+    lines.append("</shared-spec-context>")
+    return "\n".join(lines)
+
+
+def _session_start_record(repo_root: Path, session_id: Any) -> Path | None:
+    if not isinstance(session_id, str) or not session_id.strip():
+        return None
+    return Path(repo_root).joinpath(*SESSION_START_RECORD_DIR) / f"{_hash(session_id)}.json"
+
+
+def record_session_start_delivery(repo_root: Path, session_id: Any, key: str | None) -> None:
+    """Keep the key of a Claude SessionStart block that stayed inline, or clear it."""
+    record = _session_start_record(repo_root, session_id)
+    if record is None:
+        return
+    try:
+        if key:
+            _atomic_write_json(record, {"key": key})
+        elif record.exists():
+            record.unlink()
+    except OSError:
+        pass
 
 
 def _reverse_transcript_lines(path: Path, limit: int):
@@ -1251,18 +1294,25 @@ def _transcript_event(line: bytes, platform: str) -> tuple[str, set[str]] | None
 
     Only text the host recorded as delivered model context counts. Claude also
     records raw hook stdout (``hook_success``), which still holds the full text
-    when the delivered context was replaced by a file preview.
+    when the delivered context was replaced by a file preview. Claude sub-agent
+    (``isSidechain``) records describe another context and never count.
     """
     if platform == "claude":
         if b'"compact_boundary"' in line:
             record = _json_record(line)
-            if record and record.get("type") == "system" and record.get("subtype") == "compact_boundary":
+            if (
+                record
+                and record.get("isSidechain") is not True
+                and record.get("type") == "system"
+                and record.get("subtype") == "compact_boundary"
+            ):
                 return "boundary", set()
         if b"shared-spec-delivered" in line and b"hook_additional_context" in line:
             record = _json_record(line)
             attachment = record.get("attachment") if record else None
             if (
                 record
+                and record.get("isSidechain") is not True
                 and record.get("type") == "attachment"
                 and isinstance(attachment, dict)
                 and attachment.get("type") == "hook_additional_context"
@@ -1303,11 +1353,15 @@ def shared_spec_delivered(
     platform: str | None,
     *,
     scan_bytes: int = TRANSCRIPT_SCAN_BYTES,
+    repo_root: Path | None = None,
+    session_id: Any = None,
 ) -> bool:
     """Return True only when the transcript proves ``key`` was delivered whole.
 
     The newest delivered full block decides. A compaction boundary, a missing
-    or unreadable transcript, or the scan limit all fail closed.
+    or unreadable transcript, or the scan limit all fail closed. With
+    ``repo_root`` and ``session_id``, a Claude transcript that does not exist
+    yet defers to the record of this session's inline SessionStart block.
     """
     if (
         platform not in DELIVERY_PLATFORMS
@@ -1316,6 +1370,21 @@ def shared_spec_delivered(
         or not transcript_path.strip()
     ):
         return False
+    record = (
+        _session_start_record(repo_root, session_id)
+        if platform == "claude" and repo_root is not None
+        else None
+    )
+    if record is not None:
+        if not os.path.lexists(transcript_path):
+            saved = _read_json(record)
+            return bool(saved) and saved.get("key") == key
+        # The transcript now holds the SessionStart record itself.
+        try:
+            if record.exists():
+                record.unlink()
+        except OSError:
+            pass
     try:
         for line in _reverse_transcript_lines(Path(transcript_path), scan_bytes):
             event = _transcript_event(line, platform)
@@ -1340,18 +1409,38 @@ def render_shared_spec_context(
     ``max_bytes`` limits the complete UTF-8 block. Zero disables that renderer
     budget for explicit CLI recovery; hook callers use the safe default.
     ``max_chars`` adds a host character budget (zero disables it).
-    ``delivery_key`` closes the block with a delivery marker, emitted only when
-    every selected body is included whole.
+    ``delivery_key`` closes the block with a delivery marker whenever every
+    selected file could be read; see ``render_shared_spec_delivery``.
+    """
+    return render_shared_spec_delivery(
+        context, delivery_key, max_bytes=max_bytes, max_chars=max_chars,
+    )[0]
+
+
+def render_shared_spec_delivery(
+    context: SharedSpecContext,
+    delivery_key: str | None,
+    *,
+    max_bytes: int = DEFAULT_AUTO_INJECT_CONTEXT_BYTES,
+    max_chars: int = 0,
+) -> tuple[str, str | None, tuple[str, ...]]:
+    """Return the full block, the key its marker carries, and the left-out paths.
+
+    Over budget, routing rows give way before selected bodies; bodies give way
+    last, in configuration order. A block that leaves bodies out still carries
+    a marker, keyed to the bodies it includes, so later turns can send the
+    short reminder that names the left-out files. The key is None when the
+    block has no marker.
     """
     if not context.configured:
-        return ""
+        return "", None, ()
     if not context.available:
         return (
             "<shared-spec-context status=\"blocked\">\n"
             f"{context.warning}\n"
             "Do not perform writes that depend on shared Trellis rules until `.trellis/scripts/shared_spec_cache.py ensure` succeeds.\n"
             "</shared-spec-context>"
-        )
+        ), None, ()
     index_root = Path(context.index_path).parent if context.index_path else None
     budget_label = f"{max_chars}-character" if max_chars > 0 else f"{max_bytes}-byte"
 
@@ -1383,13 +1472,10 @@ def render_shared_spec_context(
             continue
         readable.append((entry, body))
 
-    included: list[tuple[dict[str, str], str]] = []
-    budgeted = max_bytes > 0 or max_chars > 0
-    budget_failures: dict[str, str] = {
-        entry["path"]: budget_failure(entry) for entry, _ in readable
-    } if budgeted else {}
-
-    def build_output(*, include_routes: bool) -> str:
+    def build_output(
+        included: list[tuple[dict[str, str], str]], *, include_routes: bool
+    ) -> tuple[str, str | None]:
+        included_names = {entry["path"] for entry, _ in included}
         included_paths = {
             os.path.normcase(entry["absolute"]) for entry, _ in included
         }
@@ -1432,51 +1518,57 @@ def render_shared_spec_context(
                 if not body.endswith(("\n", "\r")):
                     body_block += "\n"
                 lines.append(body_block + "</shared-spec-body>")
-        failures = [
-            read_failures.get(entry.get("path", ""))
-            or budget_failures.get(entry.get("path", ""))
-            for entry in context.auto_inject or []
-        ]
-        failures = [failure for failure in failures if failure]
+        failures: list[str] = []
+        for entry in context.auto_inject or []:
+            relative = entry.get("path", "(unknown)")
+            if relative in read_failures:
+                failures.append(read_failures[relative])
+            elif relative not in included_names:
+                failures.append(budget_failure(entry))
         if failures:
             lines.extend(["", "Auto-inject recovery:", *failures])
-        elif delivery_key:
+        key = None
+        if delivery_key and not read_failures:
+            key = (
+                delivery_key
+                if len(included) == len(readable)
+                else _subset_delivery_key(delivery_key, [entry["path"] for entry, _ in included])
+            )
             # Last line on purpose: a host preview that keeps only the start
             # of this block cannot contain the proof of delivery.
-            lines.append(f'<shared-spec-delivered key="{delivery_key}"/>')
+            lines.append(f'<shared-spec-delivered key="{key}"/>')
         lines.append("</shared-spec-context>")
-        return "\n".join(lines)
+        return "\n".join(lines), key
 
-    if not budgeted:
-        included.extend(readable)
-        budget_failures.clear()
-        return build_output(include_routes=True)
+    if max_bytes <= 0 and max_chars <= 0:
+        text, key = build_output(readable, include_routes=True)
+        return text, key, ()
 
-    include_routes = True
-    output = build_output(include_routes=include_routes)
-    if not fits(output):
-        include_routes = False
-        output = build_output(include_routes=include_routes)
+    # Routing rows give way first; the published index still lists them.
+    for include_routes in (True, False):
+        text, key = build_output(readable, include_routes=include_routes)
+        if fits(text):
+            return text, key, ()
 
-    for entry, body in readable:
-        included.append((entry, body))
-        del budget_failures[entry["path"]]
-        candidate = build_output(include_routes=include_routes)
-        if fits(candidate):
-            output = candidate
-            continue
-        included.pop()
-        budget_failures[entry["path"]] = budget_failure(entry)
-
-    output = build_output(include_routes=include_routes)
-    if not fits(output):
-        # Validated auto-inject path/count bounds keep the compact recovery form
-        # below the normal limit. This last guard protects synthetic callers.
-        return (
-            f'<shared-spec-context status="{context.status}" sha="{context.sha}">\n'
-            f"Published index: {context.index_path}\n"
-            "Shared rule bodies were not injected because the context budget was exhausted. "
-            "Run `python .trellis/scripts/shared_spec_cache.py ensure`, then resolve and read each configured auto_inject path.\n"
-            "</shared-spec-context>"
-        )
-    return output
+    # Selected bodies give way last: keep each one that still fits, in order,
+    # then restore the routing rows if they fit too.
+    included: list[tuple[dict[str, str], str]] = []
+    for item in readable:
+        included.append(item)
+        if not fits(build_output(included, include_routes=False)[0]):
+            included.pop()
+    included_names = {entry["path"] for entry, _ in included}
+    omitted = tuple(entry["path"] for entry, _ in readable if entry["path"] not in included_names)
+    for include_routes in (True, False):
+        text, key = build_output(included, include_routes=include_routes)
+        if fits(text):
+            return text, key, omitted
+    # Validated auto-inject path/count bounds keep the compact recovery form
+    # below the normal limit. This last guard protects synthetic callers.
+    return (
+        f'<shared-spec-context status="{context.status}" sha="{context.sha}">\n'
+        f"Published index: {context.index_path}\n"
+        "Shared rule bodies were not injected because the context budget was exhausted. "
+        "Run `python .trellis/scripts/shared_spec_cache.py ensure`, then resolve and read each configured auto_inject path.\n"
+        "</shared-spec-context>"
+    ), None, ()
